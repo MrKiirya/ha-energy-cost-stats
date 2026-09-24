@@ -19,8 +19,12 @@ export PYTHONPATH="$(pwd)${PYTHONPATH:+:$PYTHONPATH}"
 
 CONFIG_DIR="${HA_CONFIG_DIR:-config}"
 
+# --no-sync: same reason as the final exec below -- script/setup already put
+# the venv in the exact state the lock wants, and a syncing `uv run` here
+# would revert the pre-installed HA runtime requirements (see script/setup)
+# before ensure_config even runs, on a completely fresh config volume.
 if [ ! -f "$CONFIG_DIR/configuration.yaml" ]; then
-    uv run --group ha hass --script ensure_config -c "$CONFIG_DIR"
+    uv run --no-sync --group ha hass --script ensure_config -c "$CONFIG_DIR"
 fi
 
 # When HA_CONFIG_DIR points outside the repo (the devcontainer's named volume for
@@ -35,4 +39,15 @@ fi
 # forking a child, so a signal sent to this script's pid reaches the hass
 # process directly through uv's signal forwarding (script/smoke-develop relies
 # on this to stop the dev instance cleanly).
-exec uv run --group ha hass --config "$CONFIG_DIR" --debug
+#
+# --no-sync: script/setup already ran `uv sync --group ha` followed by
+# script/prefetch_ha_requirements.py to pre-install every runtime requirement
+# default_config: needs. A syncing `uv run` here would revert any of those
+# requirements that are *also* transitive dependencies of the `ha` group
+# itself (pinned there to a different version than Home Assistant's manifests
+# want, e.g. bleak-retry-connector, habluetooth) back to the group's version,
+# which then makes Home Assistant re-install them live at startup -- exactly
+# what script/setup's pre-install step exists to avoid. Run `script/setup`
+# again after changing pyproject.toml/uv.lock so the venv matches the lock
+# before this skips the sync.
+exec uv run --no-sync --group ha hass --config "$CONFIG_DIR" --debug
