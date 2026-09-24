@@ -1,0 +1,51 @@
+{
+  "name": "Energy Cost Stats",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": "."
+  },
+  "remoteUser": "vscode",
+  "features": {
+    "ghcr.io/devcontainers/features/node:2": {
+      "version": "24",
+      "pnpmVersion": "none"
+    }
+  },
+  "mounts": [
+    "source=energy-cost-stats-uv-cache,target=/home/vscode/.cache/uv,type=volume",
+    "source=energy-cost-stats-ha-config,target=/home/vscode/.ha-config,type=volume"
+  ],
+  "containerEnv": {
+    "HA_CONFIG_DIR": "/home/vscode/.ha-config"
+  },
+  "postCreateCommand": "sh script/setup",
+  "postStartCommand": "git config --global --get-all safe.directory | grep -qxF \"${containerWorkspaceFolder}\" || git config --global --add safe.directory \"${containerWorkspaceFolder}\"",
+  "forwardPorts": [8123],
+  "portsAttributes": {
+    "8123": {
+      "label": "Home Assistant",
+      "onAutoForward": "notify"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-python.debugpy",
+        "charliermarsh.ruff"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/opt/venv/bin/python",
+        "python.testing.pytestEnabled": true,
+        "python.testing.unittestEnabled": false,
+        "python.testing.pytestArgs": ["tests"],
+        "files.eol": "\n",
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.formatOnSave": true
+        }
+      }
+    }
+  }
+}
