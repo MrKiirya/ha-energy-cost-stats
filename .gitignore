@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.pyright/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# Node / card build
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Local Home Assistant dev instance (runtime data, secrets, database)
+config/*
+!config/configuration.yaml
+
+# Secrets
+.env
+.env.*
+secrets.yaml
+
+# Claude Code: personal, machine-local settings
+.claude/settings.local.json
+
+# IDE / OS
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini
