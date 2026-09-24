@@ -57,10 +57,15 @@ kWh per zone, price per zone, cost per zone, totals. Groupings: hour/day/week/mo
 - Recorder statistics API is internal and changes between HA releases — isolate it behind one adapter module.
 
 ## 6. Home Assistant compatibility
-Minimum supported version: **2025.4**. Tested in CI against the minimum and the latest release.
+Minimum supported version: **2025.4**. Tested in CI against the minimum and the latest release
+(GitHub Actions matrix: py3.13/HA 2025.4.0, py3.14/latest).
 The two are pinned via `pytest-homeassistant-custom-component` (which pins an exact `homeassistant`
-version per release) plus `python_version` markers in `pyproject.toml`'s `ha` dependency group:
-`--python 3.13` resolves PHCC `0.13.232` → HA `2025.4.0`; `--python 3.14` resolves latest PHCC → latest HA.
+version per release) plus version markers in `pyproject.toml`'s `ha` dependency group: `python_version < '3.14'`
+resolves PHCC `0.13.232` → HA `2025.4.0`; `python_full_version >= '3.14.2'` resolves latest PHCC → latest HA.
+`[tool.uv] environments` restricts resolution to that same split, so uv refuses to sync at all on
+3.14.0/3.14.1 (the gap between the two markers) instead of silently installing no HA, and a CI step asserts the resolved `homeassistant.const`
+version against the expected value for each matrix leg, so a silently-empty `ha` group fails loudly instead
+of looking green.
 
 | Feature we rely on | Since | Notes |
 |---|---|---|

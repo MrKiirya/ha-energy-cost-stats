@@ -1,0 +1,43 @@
+name: Validate
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  schedule:
+    - cron: "0 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hassfest:
+    name: hassfest
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Only tag is the stale 1.0.0; @master tracks upstream hassfest rules, which change
+      # without our commits (tasks/003-ci.md decision 3).
+      - uses: home-assistant/actions/hassfest@master
+
+  hacs:
+    name: hacs
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Last tag is from 2022; @main tracks the current image and rules (tasks/003-ci.md decision 3).
+      - uses: hacs/action@main
+        with:
+          category: integration
+          # No brand/icon.png yet (HACS wants custom_components/energy_cost_stats/brand/icon.png).
+          # See the follow-up in tasks/003-ci.md "Out of scope".
+          ignore: brands
+          comment: "false"

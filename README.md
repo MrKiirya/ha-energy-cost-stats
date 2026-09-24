@@ -1,5 +1,7 @@
 # Energy Cost Stats
 
+[![CI](https://github.com/MrKiirya/ha-energy-cost-stats/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/MrKiirya/ha-energy-cost-stats/actions/workflows/ci.yml)
+
 Home Assistant custom integration and Lovelace card that calculates electricity cost
 **per device, split by tariff zones** (day/night, peak/semi-peak/off-peak), for any period —
 retroactively, from Home Assistant's existing long-term statistics, without creating per-device entities.

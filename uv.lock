@@ -1499,6 +1499,8 @@ dev = [
     { name = "pytest-asyncio", version = "1.4.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14.2'" },
     { name = "pytest-cov", version = "6.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14.2'" },
     { name = "pytest-cov", version = "7.1.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14.2'" },
+    { name = "pyyaml", version = "6.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14.2'" },
+    { name = "pyyaml", version = "6.0.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14.2'" },
     { name = "ruff" },
     { name = "syrupy", version = "4.8.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14.2'" },
     { name = "syrupy", version = "6.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14.2'" },
@@ -1516,6 +1518,7 @@ dev = [
     { name = "pytest", specifier = ">=8" },
     { name = "pytest-asyncio", specifier = ">=0.24" },
     { name = "pytest-cov", specifier = ">=5" },
+    { name = "pyyaml", specifier = ">=6" },
     { name = "ruff", specifier = ">=0.6" },
     { name = "syrupy", specifier = ">=4" },
 ]
