@@ -1,108 +1,89 @@
-# 002 — Review (round 2)
+# 002 — Review (round 4)
 
 Verdict: APPROVE
 
+Scope: the uncommitted working tree vs `HEAD`, focused on the two round-3 required items. The changes are
+`script/develop` (`--no-sync` on the `ensure_config` `uv run`), `script/prefetch_ha_requirements.py`
+(`summarize_failures()` extracted), `tests/unit/test_prefetch_ha_requirements.py` (six new tests) and the task
+file's "Review round 3 fixes" notes. The rest of the prefetch work was reviewed in round 3 and is not re-reviewed
+here. Untracked `tasks/003`–`007` and the `.claude/agents/implementer.md` edit are out of scope.
+
 ## Checks run
 Windows host (native):
-- `uv run pytest -m unit` → `20 passed` (before and after all container runs)
-- `uv run ruff check .` → `All checks passed!`; `uv run ruff format --check .` → `22 files already formatted`
-- Mutation checks on a scratch copy (repo not touched):
-  - drop `/home/vscode/.ha-config` from the Dockerfile `install -d` line → `1 failed, 5 passed`
-    (`test_dockerfile_creates_writable_mount_points`)
-  - set the launch.json `--config` value back to `${workspaceFolder}/config` → `1 failed, 5 passed` (`test_launch_json`)
+- `uv run pytest -m unit` → `37 passed`
+- `uv run ruff check .` → `All checks passed!`; `uv run ruff format --check .` → `28 files already formatted`
+- `uv lock --check` → `Resolved 229 packages` (lock unchanged)
 
-Headless devcontainer:
-- `docker volume rm energy-cost-stats-ha-config` first, so the HA config volume starts fresh
-- `npx --yes @devcontainers/cli up --workspace-folder . --remove-existing-container` →
-  `{"outcome":"success", … "remoteUser":"vscode"}`
-- `id` → `uid=1000(vscode)`; `ls -ld /home/vscode/.ha-config` → `vscode vscode` on the new, empty volume (was
-  `root:root` in round 1); `/home/vscode/.cache/uv` and `/opt/venv` are also `vscode vscode`
-- versions → `Python 3.14.7`, `uv 0.12.18`, `v24.21.0`, npm `11.19.0`; `HA_CONFIG_DIR=/home/vscode/.ha-config`
-  comes from `containerEnv` (no override given)
-- **`sh script/develop` with default settings, fresh volume** → `http=200` on `:8123/manifest.json` after ~36 s;
-  log contains `Setting up energy_cost_stats` and `Setup of domain energy_cost_stats took 0.00 seconds`; no
-  `energy_cost_stats` error lines. `configuration.yaml` in the volume is a symlink to
-  `/workspaces/ha-energy-cost-stats/config/configuration.yaml`; the DB, `.storage/` and logs are in the volume.
-  `kill -TERM` → process gone in 2 s; `ps` shows no `hass`/`uv run`. Unrelated errors seen: `go2rtc` setup failed,
-  so `default_config` failed too (already recorded in Implementation notes).
-- Second `sh script/develop` on the populated volume (skips `ensure_config`, re-links) → `http=200` after ~6 s,
-  symlink intact, clean stop in 1 s, no leftover process
-- `sh script/test` → `21 passed`, `Required test coverage of 95% reached. Total coverage: 100.00%`, rc 0
-- `sh script/lint` → `All checks passed!` / `22 files already formatted`, rc 0
-- `uv run --group ha pyright` → `0 errors, 0 warnings, 0 informations`
-- `sh script/smoke-develop` → `OK: Home Assistant answered on :8123 and energy_cost_stats set up cleanly.`, rc 0;
-  no `hass`/`uv run` process afterwards
-- `git status --porcelain` in the container → the same 12 entries as on the host (no mode or line-ending noise)
-- Cleanup: `docker rm -f <containerId>` done; named volumes left in place; the pre-existing unrelated container
-  was not touched.
-- Host checkout after all runs: `config/` contains only `configuration.yaml`, no `.venv/bin/`, and `git status`
-  is unchanged. The only files the container wrote into the checkout are git-ignored tool caches (`.coverage`,
-  `.pytest_cache/`, `.ruff_cache/`) from `script/test`/`script/lint`, which is the 001 design and not HA runtime data.
+Mutation checks. I ran these on a scratch copy of `script/` plus the new test file, outside the repo, so the
+working tree was never modified (`git status` is identical before and after). The scratch copy also held one
+unrelated test that fails there because `.devcontainer/` was not copied. The counts below are relative to that
+baseline.
+- Removed `--no-sync` from `script/develop`'s `ensure_config` line → `test_uv_run_invocations_carry_no_sync` fails.
+- Removed `--no-sync` from `script/develop`'s final `exec uv run` line → the same test fails.
+- Removed `--no-sync` from `script/setup`'s `uv run` line → the same test fails.
+- Made the critical branch in `summarize_failures` `return 0` → 2 tests fail (`..._critical_failure_aborts` and
+  `..._via_fake_installer_frontend_failure_aborts`).
+- Replaced `critical_failures` with `[]` → the same 2 tests fail.
+- Made `summarize_failures` always `return 0` → 3 tests fail.
+- Made `main()` ignore `summarize_failures`'s return value → no test fails (see Suggestion 1).
 
-Hygiene: grepped all tracked and untracked non-ignored files (`git ls-files -co --exclude-standard`) for
-drive-letter paths, `/Users/`, non-`vscode` `/home/` paths, the host user name, email, IPv4 other than
-`127.0.0.1`, token/secret/password/api key, `compose`, and the parent folder name. Only generic, explanatory hits
-were found. The task file's "Cleanup performed" note now just says "an unrelated, already-stopped container from
-a different local project", with no names. No junk files. `.devcontainer/devcontainer-lock.json` holds only the
-public Node feature digest.
+Fresh devcontainer (`docker volume rm energy-cost-stats-ha-config`, then
+`npx @devcontainers/cli up --remove-existing-container`, latest HA 2026.9.3 on Python 3.14):
+- `up` → `{"outcome":"success"}`. Post-create `script/setup` printed `pre-installing 25 …`.
+- `sh script/setup` again → rc 0, `pre-installing 25 …`. `$HA_CONFIG_DIR` was confirmed **empty** afterwards.
+  The venv has `bleak-retry-connector 4.7.0`, `habluetooth 6.26.11` and `home-assistant-frontend`.
+- `sh script/develop` on the empty volume → the log starts with `Unable to find configuration. Creating default
+  one`. It has **0** `Attempting install of` lines and **0** `Uninstalled/Installed N packages` lines. It shows
+  `Setting up frontend`, `Setting up energy_cost_stats` and `Home Assistant initialized in 5.80s`, with no
+  recovery mode. Stopped with `TERM`. No `hass` process was left.
+- `sh script/smoke-develop` → rc 0, `OK: HTTP 200 on :8123; log line: … Setting up energy_cost_stats`, and no
+  `hass` process afterwards.
 
-## Acceptance criteria
-- [x] `uv run pytest -m unit` passes, including the new tests — verified on the host (20 passed).
-- [x] ruff check / format check exit 0 — verified on the host and in the container.
-- [x] `docker build` succeeds — verified implicitly by `devcontainer up`, which built the changed Dockerfile.
-- [x] `devcontainer up` → success; post-create ran — verified.
-- [x] Python 3.14.x / uv 0.12.18 / Node v24.x — verified.
-- [x] `/opt/venv` env and interpreter — verified (`UV_PROJECT_ENVIRONMENT=/opt/venv`, owned by vscode).
-- [x] `script/test` in the container — verified (21 passed, coverage gate met).
-- [x] `script/lint` in the container — verified.
-- [x] `pyright` in the container → 0 errors — verified.
-- [x] `script/smoke-develop` → exit 0, no `hass` left — verified. The output is still a generic OK line (round-1
-      Suggestion 1, deferred to Follow-ups). The HTTP 200 and the setup line were confirmed separately (see above).
-- [x] Container `git status` clean of noise — verified. `safe.directory` idempotency was verified in round 1, and
-      `postStartCommand` has not changed since.
-- [x] Host `.venv` untouched, host unit tests pass after the container runs — verified.
-- [x] Optional min-HA check — skipped, with the reason recorded. Acceptable.
-- [x] `:latest` uv pin mutation fails the Dockerfile test — verified in round 1; that test has not changed.
-- [x] `script/develop` drops the `$(pwd)/custom_components` form and honours `HA_CONFIG_DIR` — verified by reading
-      the script and running it with the container default.
-- [x] No personal or local data in committed files — verified by the grep above (round-1 Required 2 resolved).
-- [x] CLAUDE.md / README updated, and every listed command works — `script/develop` (the "Run dev HA" row and the
-      README's http://localhost:8123) now works out of the box on a fresh volume (round-1 Required 1 resolved).
-- [ ] Exec bit for `script/smoke-develop` (`git add --chmod=+x`) — pending, main session at commit time.
-- [ ] Human: VS Code "Reopen in Container", extensions, Testing panel, onboarding at :8123, breakpoint in
-      `async_setup` — pending, to be checked by the human.
+3.13 / min-HA leg (one-off `ghcr.io/astral-sh/uv:python3.13-trixie`, repo copied into the container,
+`UV_PROJECT_ENVIRONMENT=/opt/venv`, empty `HA_CONFIG_DIR`). I ran it twice, with the same results:
+- `sh script/setup --python 3.13` → rc 0, `pre-installing 18 …`, venv `3.13.15` / `homeassistant 2025.4.0`.
+- `sh script/develop` on the empty config dir → `Creating default one`, **0** `Attempting install of`, **0**
+  `Uninstalled/Installed N packages`, `Setting up stage frontend: {'frontend'}` and `initialized in 3.5s`.
+  Afterwards the venv is still `3.13.15` / `2025.4.0`, and the `pyvenv.cfg` mtime is unchanged, so the venv
+  was **not rebuilt**. The only noise is the known `Using incompatible environment … due to --no-sync` warning
+  (round-3 Suggestion 5). The expected environment errors were logged: go2rtc (decision 6), plus
+  ffmpeg/turbojpeg, which the bare image lacks. See also Suggestion 3.
 
-Round-1 required items:
-1. Root-owned HA config volume — **resolved**. `.devcontainer/Dockerfile:21` pre-creates `/home/vscode/.ha-config`.
-   The new test `test_dockerfile_creates_writable_mount_points` fails without the fix (mutation-checked), and a
-   fresh volume mounts as `vscode:vscode`, so `script/develop` runs with default settings.
-2. Other-project mention in the task file — **resolved** (`tasks/002-devcontainer.md:351-354` is now generic).
+Hygiene: I grepped the diff and both new files for drive-letter paths, `/Users/`, the host user name, email, IPv4
+addresses other than 127.0.0.1, token/secret/password and the other local project's name. There were no hits.
 
-Main-session request:
-3. `.vscode/launch.json` uses the same config dir as `script/develop` — **resolved**. `.vscode/launch.json:9` has
-   `"--config", "${env:HA_CONFIG_DIR}"`, which resolves to the named volume through `containerEnv`.
-   `test_launch_json` now checks the exact value after `--config` (mutation-checked). The debug config itself
-   (breakpoint) stays a human check.
+Cleanup: the devcontainer was removed with `docker rm -f`. The 3.13 containers ran with `--rm`. The named volumes
+were left in place. The unrelated pre-existing container was not touched. Host `git status` is unchanged.
+
+## Acceptance criteria (follow-up round goal and round-3 required items)
+- [x] After `script/setup`, a dev HA with `default_config:` starts without any live install, **including on a
+      fresh, empty config volume**. Verified on 3.14/latest and on 3.13/2025.4.0 (round-3 Required 1 resolved).
+- [x] A `--python 3.13` venv is no longer rebuilt by `script/develop`. Verified: the venv stays 2025.4.0.
+- [x] The critical vs best-effort failure policy has unit tests that fail when the logic is neutralized
+      (round-3 Required 2a resolved).
+- [x] The `--no-sync` flags in `script/setup` and `script/develop` are guarded by a test that fails when any one
+      of them is removed (round-3 Required 2b resolved).
+- [x] The task file's incorrect verification claim now has an inline correction (line ~501), and the round is
+      re-verified with a truly empty `HA_CONFIG_DIR`.
+- [x] `script/smoke-develop` passes in the container. Host unit tests, ruff and `uv lock --check` pass.
+- [x] No personal or local data.
 
 ## Findings
 ### Required
 None.
 
 ### Suggestions
-1. `.vscode/launch.json:9` — the debug config relies on `script/develop` having run at least once, because only
-   that script symlinks the committed `config/configuration.yaml` into the volume. If the human starts the
-   debugger first on a fresh volume, HA writes its own default `configuration.yaml` there without
-   `energy_cost_stats:`, so the breakpoint in `async_setup` is never hit. (A later `script/develop` run repairs this
-   with `ln -sf`.) The assumption is recorded in the Implementation notes, but not where the human will look.
-   Options: add a one-line note to the README/CLAUDE.md devcontainer paragraph ("run `script/develop` once before
-   using the debugger"), or add a `preLaunchTask` that performs the link (this would need a `.vscode/tasks.json`,
-   which decision 8 excluded, so it is the human's call).
-2. `tasks/002-devcontainer.md:146-149` (decision 8) and `:196` (the `test_launch_json` row) still say
-   `--config ${workspaceFolder}/config` / "a `--config` value starting with `${workspaceFolder}`", which no longer
-   matches the code. Update both to `${env:HA_CONFIG_DIR}` so the spec and the tests agree.
-3. `tasks/002-devcontainer.md:323` — "(see that note above)" points to the "Cleanup performed" note, which is
-   *below* (line 351). Change it to "below".
-4. Round-1 suggestions 1–3, 6 and 7 are still open and correctly listed in Follow-ups. Before merging, decide
-   whether to commit `.devcontainer/devcontainer-lock.json` (I recommend committing it: it holds only a public
-   digest and makes Node feature resolution reproducible). The shorter CLAUDE.md `config/` bullet
-   (`CLAUDE.md:24-27`) is still worth doing because the bullet contradicts itself.
+1. `script/prefetch_ha_requirements.py:261-262` — `main()` returning `summarize_failures(...)` has no test.
+   Replacing it with `return 0` leaves the suite green. `main()` imports `homeassistant`, so the fix could be a
+   small test that monkeypatches `collect_requirements`, `missing_requirements`, `install_requirements` and a
+   stub `homeassistant` module. Alternatively, move the post-import flow into a helper that takes those values
+   as arguments.
+2. Round-3 suggestions that are still open: 1 (`flush=True` on the `print`s), 2 (pyright does not cover
+   `script/`), 3 (`tasks/002-devcontainer.md:496` still says "0 the second (idempotent)", but a second
+   `script/setup` actually re-installs the 25 after the exact sync), 4 (`DISCOVERY_INTEGRATIONS` rule) and 5
+   (`--python` forwarding / the missing `Setting up energy_cost_stats` log line on 2025.4.0, for 003-ci).
+3. For 003-ci / the min-HA leg: on 2025.4.0, `homeassistant_alerts` logged
+   `TypeError: Channel.getaddrinfo() takes 3 positional arguments but 4 …`. This looks like an
+   `aiodns`/`pycares` version mismatch between the lock and HA 2025.4.0's constraints. It does not block startup
+   and is unrelated to this task. It is worth recording in the 003 follow-ups if that leg asserts on
+   `ERROR` lines.

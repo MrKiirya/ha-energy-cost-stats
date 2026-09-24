@@ -407,6 +407,16 @@ by pinning a dependency in `pyproject.toml`/`uv.lock`/the Dockerfile — no such
 `pyproject.toml`, `uv.lock` and `.devcontainer/Dockerfile` are untouched by this round (`uv lock --check`
 still passes).
 
+> **Correction (follow-up round, see below):** the `rf_protocols`/`infrared_protocols` "discovery-triggered"
+> guess above is wrong. Reading `homeassistant/bootstrap.py` shows `radio_frequency`/`infrared` are
+> `BASE_PLATFORMS` (`homeassistant.const.Platform` members), which HA resolves and installs requirements for
+> on **every** startup, unconditionally — not only when a real device is discovered. Reproduced deterministically
+> in this task's own (non-LAN-bridged) container once the pre-install helper's root domains were widened to
+> include `BASE_PLATFORMS`. This does not change the "root cause not identified" conclusion for the original
+> report (a concurrent `uv sync` racing a live HA install remains the best-supported explanation, now with the
+> `uv run` implicit-sync revert documented below as a second, related mechanism), but the LAN-discovery
+> explanation specifically should not be relied on.
+
 **Fix actually shipped this round: `script/smoke-develop` had a real, confirmed, independent bug that let
 exactly this failure mode go undetected.** The script declared success as soon as (a) HTTP 200 answered on
 :8123 and (b) `energy_cost_stats` appeared as "set up" in the log — both of which happen during the **first**
@@ -423,7 +433,145 @@ devcontainer (`OK: HTTP 200 on :8123; log line: ... Setting up energy_cost_stats
 verified fix for this round; it also now prints the matched HTTP code / log line (review round 1 suggestion 1
 is resolved as a side effect).
 
+### Follow-up round — `script/setup` pre-installs Home Assistant's runtime requirements
+Goal: after `script/setup`, a dev HA with `default_config:` starts without any live
+`python -m uv pip install` (the mechanism behind the recovery-mode report above, when it races a concurrent
+`uv sync`).
+
+- **New file `script/prefetch_ha_requirements.py`** (stdlib only, no `homeassistant` import at module level so
+  its manifest-walking logic is unit-tested without Home Assistant installed; `main()` needs the `ha` group).
+  Confirmed against `homeassistant/requirements.py` (`RequirementsManager._async_process_integration`) that HA
+  gathers requirements by walking both `dependencies` **and** `after_dependencies`, so the helper does the
+  same. Roots walked: `default_config`, `frontend` (not a `default_config` dependency, but the dev UI, and
+  per this follow-up's brief "must not be optional"), our own `custom_components/energy_cost_stats/manifest.json`
+  (currently just `recorder`), **and every domain in `homeassistant.const.BASE_PLATFORMS`** (see next point —
+  this last group was missing in the first pass and caused two runtime installs to slip through verification).
+  Requirements already satisfied (checked via `importlib.metadata.version` + `packaging.requirements.Requirement`,
+  mirroring HA's own `is_installed()`) are skipped, so repeat `script/setup` runs are fast and don't hit the
+  network. Installs one requirement at a time (mirroring the exact `uv pip install ... --index-strategy
+  unsafe-first-match --constraint <package_constraints.txt>` flags `homeassistant.util.package.install_package()`
+  uses) so one package without a wheel for the platform doesn't block the rest; a failure of a `frontend`-manifest
+  requirement (`home-assistant-frontend`) aborts `script/setup` with a non-zero exit (decided "fail", since
+  `script/develop` would otherwise still trigger a live install for it and the brief says frontend must not be
+  optional); any other failure only warns and continues.
+- **Discovery during verification: `homeassistant.const.BASE_PLATFORMS` domains are *not* discovery-triggered,
+  they are always processed.** The first version of the helper only walked `default_config`'s manifest tree and
+  missed two runtime installs that still happened on a clean `script/develop` run:
+  `Attempting install of rf-protocols==4.3.0` / `infrared-protocols==9.0.0` (domains `radio_frequency` /
+  `infrared`, `"integration_type": "entity"`). Reading `homeassistant/bootstrap.py`
+  (`_async_resolve_domains_and_preload`) showed why: HA "also processes all base platforms since we do not
+  require the manifest to list them as dependencies" — `BASE_PLATFORMS` is `{platform.value for platform in
+  Platform}` (`homeassistant/const.py`), a fixed, version-following list of every entity-platform domain
+  (`sensor`, `switch`, `camera`, `radio_frequency`, `infrared`, ...), and HA resolves/installs requirements for
+  **all** of them unconditionally, independent of `default_config:` or any device discovery. This corrects the
+  original "Human report" investigation's guess (further down in these notes) that `rf_protocols`/
+  `infrared_protocols` were discovery-triggered by a real device on the human's LAN — they are not; every dev
+  instance loads them regardless. Fixed by importing `BASE_PLATFORMS` from `homeassistant.const` in `main()`
+  and adding it to the walked roots; re-verified end to end afterwards (0 "Attempting install of" lines).
+- **`uv run`'s implicit sync fights this pre-install for packages pinned differently by the `ha` group itself.**
+  A second, independent bug found during verification: `bleak-retry-connector` and `habluetooth` are HA runtime
+  requirements (pinned `==4.7.0` / `==6.26.11` in `package_constraints.txt`) **and** transitive dependencies of
+  `pytest-homeassistant-custom-component` in the `ha` dev group, pinned there to different versions
+  (`4.7.1` / `7.1.2` in this `uv.lock`). `uv run` performs an implicit project sync before running its command
+  unless told not to; that sync reverts the venv to the lock's versions, i.e. it silently undid this script's
+  install of the HA-pinned versions right before `script/develop`'s `uv run --group ha hass ...` executed,
+  so HA saw a version mismatch and reinstalled them itself at startup (`Attempting install of ...`) — this
+  reproduces even in a container with no LAN and no discoverable devices, so it is a very plausible additional
+  contributor to the original human recovery-mode report, on top of the confirmed-refuted and
+  still-unconfirmed causes already recorded below. Fixed by adding `--no-sync` to both `uv run` invocations that
+  must preserve this script's install (`script/setup`'s call to `prefetch_ha_requirements.py`, and
+  `script/develop`'s final `exec uv run --group ha hass ...`); both are safe to skip syncing because
+  `script/setup`'s own `uv sync --group ha "$@"` right before them already put the venv in the exact state the
+  lock wants. `script/test`/`script/lint`/`pyright` still use a syncing `uv run` (unchanged, out of scope) and
+  will revert this pre-install for any such overlapping package; if that happens, re-run `script/setup` before
+  `script/develop` (documented as a Follow-up below, not fixed this round).
+- **`--python` forwarding.** `script/setup "$@"` already forwarded extra args (e.g. `--python 3.13` for the
+  min-HA leg, per `tasks/001-scaffold.md`'s precedent) to `uv sync`, but not to the new `uv run --no-sync`
+  call. Without it, `uv run` defaulted to `.python-version` (`3.14`) while `--no-sync` kept the actual (3.13)
+  venv, which worked but printed a `uv` warning ("Using incompatible environment ... due to --no-sync").
+  Fixed by forwarding `"$@"` to that `uv run` call too (`uv run --no-sync --group ha "$@" python
+  script/prefetch_ha_requirements.py`); re-verified the 3.13 leg prints no such warning afterwards.
+- **Verification performed** (fresh `energy-cost-stats-ha-config` **and** `energy-cost-stats-uv-cache` volumes,
+  rebuilt image, `npx @devcontainers/cli up`):
+  - `script/setup` → pre-install step reports 25 requirements the first time, 0 the second (idempotent), no
+    failures.
+  - `script/develop` (fresh `HA_CONFIG_DIR`) → log has **zero** `Attempting install of` lines, one
+    `Setting up frontend` line, `Setting up energy_cost_stats`, `Home Assistant initialized in ...s`, zero
+    `recovery mode` lines.
+    > **Correction (review round 3):** this "zero installs" result only held because `HA_CONFIG_DIR` already
+    > had a `configuration.yaml` from an earlier run in the same volume, so `script/develop`'s `ensure_config`
+    > branch (`[ ! -f "$CONFIG_DIR/configuration.yaml" ]`) was skipped. On a genuinely fresh (empty)
+    > `HA_CONFIG_DIR` — the default devcontainer path on first use — that branch's `uv run --group ha hass
+    > --script ensure_config …` call did not have `--no-sync`, so its implicit sync reverted the pre-installed
+    > `bleak-retry-connector`/`habluetooth` versions before HA even started, producing exactly the live
+    > `Attempting install of` lines this pre-install step exists to avoid (see review round 3, Required 1).
+    > Fixed by adding `--no-sync` to that `uv run` call too; re-verified below with a truly empty
+    > `HA_CONFIG_DIR`.
+  - `script/smoke-develop` → `OK`, no leftover `hass` process afterwards (`pgrep -af hass` empty).
+  - `script/test` → 32 tests pass (11 new unit tests for the helper), coverage gate met.
+  - `script/lint`, `uv run --group ha pyright` → both clean.
+  - 3.13 leg: `sh script/setup --python 3.13` in a one-off `ghcr.io/astral-sh/uv:python3.13-trixie` container
+    (same recipe as `tasks/001-scaffold.md`'s "Docker verification") → resolves `pytest-homeassistant-custom-component==0.13.232`
+    → `homeassistant==2025.4.0`, 18 requirements pre-installed, no warning, no failure.
+  - Host: `uv run pytest -m unit` (31 passed), `uv run ruff check .` / `ruff format --check .` (clean),
+    `uv lock --check` (unchanged, still resolves) — confirming `pyproject.toml`/`uv.lock` were not touched.
+  - `git status --porcelain` inside the container showed only this round's intended files (one stray directory
+    from an early manual-testing misstep with a Windows-mangled path was found and removed before the final
+    check).
+  - Cleanup: the devcontainer's container was removed (`docker rm -f`); both named volumes were left in place,
+    as in the original task's cleanup convention.
+
+### Review round 3 fixes (CHANGES_REQUESTED → addressed)
+- **Required 1 — `script/develop`'s `ensure_config` `uv run` lacked `--no-sync`.** On a genuinely fresh
+  `HA_CONFIG_DIR` (no `configuration.yaml` yet — the default devcontainer path on first use), `script/develop`
+  ran `uv run --group ha hass --script ensure_config -c "$CONFIG_DIR"` *before* the final `exec uv run --no-sync
+  …` line. That call still performed an implicit (syncing) `uv run`, which reverted `script/setup`'s
+  pre-installed `bleak-retry-connector`/`habluetooth` versions back to the `ha` group's own pins, so HA then
+  installed them live at startup — reintroducing exactly the failure mode this whole follow-up round exists to
+  remove, and (per the round-2 note) rebuilding the venv entirely under `--python 3.13`. Fixed by adding
+  `--no-sync` to that `uv run` call too.
+- **Required 2 — no test would fail if this round's key behaviours were removed.** Added
+  `test_uv_run_invocations_carry_no_sync` (`tests/unit/test_prefetch_ha_requirements.py`), which reads
+  `script/setup` and `script/develop` as text and asserts every non-comment line containing `uv run` also
+  contains `--no-sync`; confirmed it fails against the pre-fix `script/develop` and passes after. Also extracted
+  the critical/best-effort classification out of `main()` into a new pure function
+  `summarize_failures(failures, critical_requirements) -> int` in `script/prefetch_ha_requirements.py`, and added
+  four unit tests for it (`test_summarize_failures_no_failures_returns_zero`,
+  `..._critical_failure_aborts`, `..._best_effort_failure_continues`, plus two "fake installer" tests that go
+  through `install_requirements` with a monkeypatched `subprocess.run`, no network, host-runnable, confirming
+  the end-to-end classification with a frontend-critical failure vs. a non-critical one). Confirmed all five
+  fail with `AttributeError` before `summarize_failures` existed.
+- **Required — task file verification note corrected.** The "Follow-up round" section's "Verification performed"
+  note claimed `script/develop` (fresh `HA_CONFIG_DIR`) produced zero `Attempting install of` lines; that result
+  only held because the config volume already had a `configuration.yaml` from an earlier run, skipping the
+  `ensure_config` branch entirely. Added an inline correction there (see above) and re-verified below with a
+  truly empty `HA_CONFIG_DIR`.
+- **Re-verification performed this round** (`docker volume rm energy-cost-stats-ha-config`, fresh
+  `npx @devcontainers/cli up`, `energy-cost-stats-uv-cache` volume kept warm):
+  - `script/setup` → pre-install step reported 25 requirements, no failures.
+  - Confirmed `$HA_CONFIG_DIR` (`/home/vscode/.ha-config`) was empty (no `configuration.yaml`) before starting
+    `script/develop`.
+  - `script/develop` on that empty config dir → log has **zero** `Attempting install of` lines, **zero**
+    `Uninstalled`/`Installed N packages` lines, `Setting up frontend`, `Setting up energy_cost_stats`,
+    `Home Assistant initialized in 5.73s`, no recovery-mode line. Stopped with `TERM`; confirmed no `hass`
+    process remained afterwards.
+  - `script/smoke-develop` → `OK: HTTP 200 on :8123; log line: ... Setting up energy_cost_stats`; confirmed no
+    `hass` process remained afterwards.
+  - Host (before/after the container run): `uv run pytest -m unit` → 37 passed (5 new tests this round);
+    `uv run ruff check .` / `ruff format --check .` → clean; `uv lock --check` → resolves unchanged.
+  - Other long suites (`script/test`, `script/lint`, pyright in-container, the 3.13/min-HA leg) were not
+    re-run this round per the review's scope (only Required 1/2 touch code that affects them, and both were
+    already green in round 3's own checks); left to a future full pass if needed.
+  - Cleanup: the devcontainer's container was removed (`docker rm -f`); both named volumes were left in place,
+    consistent with earlier rounds' convention.
+
 ## Follow-ups
+- Running `script/test` / `script/lint` / `uv run --group ha pyright` (all use a syncing `uv run`) between
+  `script/setup` and `script/develop` can revert the small subset of pre-installed requirements that are also
+  transitive dependencies of the `ha` group itself, pinned to a different version there (currently
+  `bleak-retry-connector`, `habluetooth`). If `script/develop` then shows an `Attempting install of` line for
+  one of those, re-run `script/setup` first. Not fixed this round (would need a broader decision on whether
+  `script/test`/`lint`/`pyright` should also use `--no-sync`, which is out of this follow-up's scope).
 - Stage 4: named volume for `frontend/node_modules` in `devcontainer.json`.
 - 003-ci: the min-HA (Python 3.13) matrix leg needs its own environment (fresh container or
   `UV_PROJECT_ENVIRONMENT` override), since the devcontainer's shared `/opt/venv` cannot be recreated for a
