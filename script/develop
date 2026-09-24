@@ -1,0 +1,20 @@
+#!/bin/sh
+# Run a local Home Assistant dev instance with this integration loaded.
+# Linux / container only: Home Assistant does not run natively on Windows.
+set -eu
+cd "$(dirname "$0")/.."
+
+case "$(uname 2>/dev/null || echo unknown)" in
+    MINGW* | MSYS* | CYGWIN*)
+        echo "Home Assistant does not run natively on Windows; use the devcontainer." >&2
+        exit 1
+        ;;
+esac
+
+export PYTHONPATH="${PYTHONPATH:-}:$(pwd)/custom_components"
+
+if [ ! -d config ]; then
+    uv run --group ha hass --script ensure_config -c config
+fi
+
+uv run --group ha hass --config config --debug

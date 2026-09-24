@@ -58,6 +58,9 @@ kWh per zone, price per zone, cost per zone, totals. Groupings: hour/day/week/mo
 
 ## 6. Home Assistant compatibility
 Minimum supported version: **2025.4**. Tested in CI against the minimum and the latest release.
+The two are pinned via `pytest-homeassistant-custom-component` (which pins an exact `homeassistant`
+version per release) plus `python_version` markers in `pyproject.toml`'s `ha` dependency group:
+`--python 3.13` resolves PHCC `0.13.232` → HA `2025.4.0`; `--python 3.14` resolves latest PHCC → latest HA.
 
 | Feature we rely on | Since | Notes |
 |---|---|---|
