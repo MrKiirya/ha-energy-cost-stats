@@ -8,6 +8,10 @@ Spec sections: SPEC §2, §3, §4 (report output), §5 (UTC vs local, DST, missi
 > e.g. single-rate key `t0`, missing data as `None`, money/kWh serialized as strings, 7-day gap cap.
 > Update the affected tests/criteria accordingly.
 
+> **Performance note from 004 review:** `TariffPlan.zone_for_hour` rebuilds its 24-entry lookup on every call
+> (~2.7 µs). Do not call it per device × hour: build the per-plan hour→zone table once (e.g. a public
+> `hour_zones()` added here, or a local cache) and classify each hour once per request, reusing it for all devices.
+
 ## Goal
 For any window of UTC hours and a given IANA time zone, the engine can tell each hour's local start time,
 the tariff plan and zone in force, and which hour/day/week/month bucket the hour belongs to. DST days

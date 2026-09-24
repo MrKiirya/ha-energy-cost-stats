@@ -1,6 +1,6 @@
 # 004 — Tariff model: versioned plans, zones, validation, presets
 
-Status: planned
+Status: in-review
 Roadmap: SPEC §8 stage 1 (engine + unit tests), task 1 of 4 (004-tariff-model, 005-time-and-zones,
 006-pricing-and-grouping, 007-data-quality)
 Spec sections: SPEC §2 (engine is pure Python), §3 (tariff data model), §5 (pitfalls); CLAUDE.md principles 3, 4, 6
@@ -85,7 +85,8 @@ creation" work.
 
 Module `engine/presets.py`, keyword-only arguments, each returns a `TariffPlan`:
 - `single_rate(*, valid_from: date, price: Decimal, name: str = "Single-rate")` → one zone
-  `t1` "Single-rate", `Period(0, 24)`.
+  `t0` "Single-rate", `Period(0, 24)` (human decision: `t0` is a distinct key, never mixed with the
+  two-zone `t1`).
 - `ru_two_zone(*, valid_from, day_price, night_price, name="Two-zone")` → `t1` "Day" `[7, 23)`,
   `t2` "Night" `[23, 7)`.
 - `ru_three_zone(*, valid_from, peak_price, semi_peak_price, night_price, name="Three-zone")` →
@@ -160,25 +161,25 @@ All tests are `unit` (auto-marked by directory). Prices in tests are built from 
 | unit | `tests/unit/test_tariff.py::test_schedule_plan_for` | Plans A (2026-01-01) and B (2026-07-01): `2025-12-31 → None`, `2026-01-01 → A`, `2026-06-30 → A`, `2026-07-01 → B`, `2030-01-01 → B`. |
 | unit | `tests/unit/test_tariff.py::test_schedule_price_only_change` | Plan B is a `replace()` of A with only a new `valid_from` and new prices; both coexist; `plan_for` returns the right prices on each side of the switch. |
 | unit | `tests/unit/test_tariff.py::test_schedule_plans_between` | Same A/B: `[2026-06-15, 2026-07-15) → (A, B)`; `[2026-07-02, 2026-08-01) → (B,)`; `[2025-06-01, 2025-07-01) → ()`; `[2026-07-01, 2026-07-01)` (empty range) → `()`. |
-| unit | `tests/unit/test_presets.py::test_single_rate` | One zone `t1`; every hour 0–23 maps to it; price as given. |
+| unit | `tests/unit/test_presets.py::test_single_rate` | One zone `t0` (human decision: distinct from two-zone `t1`); every hour 0–23 maps to it; price as given. |
 | unit | `tests/unit/test_presets.py::test_ru_two_zone` | `day_price=Decimal("10.30")`, `night_price=Decimal("4.43")`: `t1` "Day" covers 16 hours (7–22), `t2` "Night" covers 8 hours (23, 0–6); prices match. |
 | unit | `tests/unit/test_presets.py::test_ru_three_zone` | `t1` "Peak" = {7, 8, 9, 17, 18, 19, 20} (7 h); `t3` "Semi-peak" = {10…16, 21, 22} (9 h); `t2` "Night" = {23, 0…6} (8 h). |
 | unit | `tests/unit/test_presets.py::test_presets_editable` | `dataclasses.replace` on a preset plan with a renamed zone (`replace(zone, name="Daytime")`) keeps the key and stays valid. |
 
 ## Acceptance criteria
 Windows native:
-- [ ] `uv run pytest -m unit` → all tests pass, including the task 001 guard tests
+- [x] `uv run pytest -m unit` → all tests pass, including the task 001 guard tests
   (`test_engine_has_no_forbidden_imports` still passes with the new modules).
-- [ ] `uv run pytest -m unit --cov=custom_components/energy_cost_stats/engine --cov-branch --cov-report=term-missing --cov-fail-under=95` → passes; `tariff.py` and `presets.py` are listed.
-- [ ] `uv run ruff check .` and `uv run ruff format --check .` → exit 0.
-- [ ] `uv run pyright custom_components/energy_cost_stats/engine tests/unit` → 0 errors (engine is strict).
+- [x] `uv run pytest -m unit --cov=custom_components/energy_cost_stats/engine --cov-branch --cov-report=term-missing --cov-fail-under=95` → passes; `tariff.py` and `presets.py` are listed.
+- [x] `uv run ruff check .` and `uv run ruff format --check .` → exit 0.
+- [x] `uv run pyright custom_components/energy_cost_stats/engine tests/unit` → 0 errors (engine is strict).
 
 General:
-- [ ] `rg -n "float" custom_components/energy_cost_stats/engine` → matches only in comments/docstrings or the
+- [x] `rg -n "float" custom_components/energy_cost_stats/engine` → matches only in comments/docstrings or the
   runtime `isinstance` rejection, never as a price type.
-- [ ] `rg -n "homeassistant|zoneinfo|timezone" custom_components/energy_cost_stats/engine/tariff.py custom_components/energy_cost_stats/engine/presets.py` → no imports (this task is time-zone free).
-- [ ] `docs/SPEC.md` §3 and §5 contain the decisions listed under "SPEC edits"; no other section changed.
-- [ ] No files touched outside the "Files" list (the working tree may contain other agents' changes; do not
+- [x] `rg -n "homeassistant|zoneinfo|timezone" custom_components/energy_cost_stats/engine/tariff.py custom_components/energy_cost_stats/engine/presets.py` → no imports (this task is time-zone free).
+- [x] `docs/SPEC.md` §3 and §5 contain the decisions listed under "SPEC edits"; no other section changed.
+- [x] No files touched outside the "Files" list (the working tree may contain other agents' changes; do not
   modify or stage them).
 
 ## Out of scope
@@ -201,4 +202,60 @@ None — resolved by the human (2026-09-25):
 
 <!-- Filled in by implementer -->
 ## Implementation notes
+- Applied the human decisions verbatim: single-rate preset uses zone key `t0` (distinct from the
+  two-zone `t1`); `t1`/`t2`/`t3` follow RU meter registers (day/peak, night, semi-peak); `Zone.price`
+  and `band_prices` reject negative `Decimal`s (0 allowed). Updated the two affected rows in "Tests to
+  write first" and the `single_rate` bullet under "Model design" to say `t0` instead of `t1`, per the
+  task's own instruction that the "Open questions" resolution overrides the body.
+- `Period.hours()` and `TariffPlan.__post_init__` build the per-hour ownership map by iterating each
+  zone's periods; overlap is reported via the first (lowest-numbered) conflicting hour, matching the
+  example error message format in the spec (`"hour 22 covered by zones t1 and t2"`).
+- `TariffPlan._hour_lookup` is a `field(init=False, ...)` tuple populated with `object.__setattr__` in
+  `__post_init__`, as prescribed, so it survives `dataclasses.replace()` (which re-runs validation).
+- `_validate_price` is a module-level helper shared by `Zone.price` and `Zone.band_prices` entries; the
+  `isinstance(price, Decimal)` / `isinstance(value, int)` runtime guards are intentionally redundant
+  under pyright's static types (the whole point is to catch `float`/`bool` misuse at the config-layer
+  boundary), so they carry a narrow `# pyright: ignore[reportUnnecessaryIsInstance]` rather than being
+  removed or weakened.
+- `TariffSchedule.plan_for` uses `bisect.bisect_right` on the sorted `valid_from` list, as specified.
+  `plans_between` treats each plan's effective range as `[valid_from, next_plan.valid_from)` (open-ended
+  for the last plan) and intersects it with `[start, end)`; an empty `[x, x)` query range always returns
+  `()`.
+- No deviations from the task body once the human-decision overrides (`t0`, price `>= 0`, `t1`
+  day/peak `t2` night `t3` semi-peak) are applied.
+
+### Review round 1 fixes
+- `_KEY_RE`/`_HHMM_RE` now use `re.fullmatch` (patterns no longer carry `^`/`$`, which is redundant
+  with `fullmatch` and was the source of the bug: `$` also matches just before a trailing `\n`).
+  Added `"t1\n"` to `test_zone_invalid` and `("07:00\n", "23:00")` to `test_period_parse_invalid`.
+- `_validate_volume_bands` now runs every `volume_band_limits_kwh` entry through a new
+  `_validate_volume_limit` helper (`isinstance(Decimal)` -> `is_finite()` -> `> 0`), mirroring
+  `_validate_price` but with a strict `> 0` bound instead of `>= 0`. `Decimal("NaN")` and
+  `Decimal("Infinity")` now raise `TariffValidationError` instead of `decimal.InvalidOperation`
+  (NaN) or being silently accepted (Infinity); a `float` limit now raises too. Added the three
+  parametrized cases plus an equal-limits case (`(Decimal("3900"), Decimal("3900"))`) to
+  `test_plan_volume_bands_invalid`.
+- `TariffPlan._hour_lookup` is no longer a dataclass field: `field(repr=False, compare=False)` does
+  not stop `dataclasses.asdict()` from walking it, since `asdict()` ignores those flags. The 24-entry
+  hour->zone lookup is now built by a module-level `_build_hour_lookup(zones)` function, called
+  on demand from `zone_for_hour` and not stored anywhere, so it cannot leak through `asdict()`,
+  `repr()` or equality/hashing by construction. This trades a small, already-validated O(24)
+  recomputation per `zone_for_hour` call for correctness; see Follow-ups if profiling in 005/006
+  shows it needs caching. Added `test_plan_hour_lookup_not_leaked`.
+- Added `test_schedule_plans_between` case `[2026-06-15, 2026-07-01) == (plan_a,)` (end date equals
+  the next plan's `valid_from`), pinning down the half-open exclusive-end semantics the mutation
+  testing in the review flagged as unguarded.
+- Confirmed unaffected by these fixes: `uv run pytest -m unit` (109 passed), coverage 100% for
+  `tariff.py`/`presets.py`, `ruff check`/`ruff format --check` (after wrapping one line that grew
+  past 88 chars), and pyright strict (0 errors) in the `ghcr.io/astral-sh/uv:python3.14-trixie`
+  container with the `ha` group installed.
+
 ## Follow-ups
+- Review suggestions not addressed here (left for a later task if they turn out to matter):
+  self-overlapping zone error wording ("covered twice by zone t1"), naming the date in the
+  duplicate-`valid_from` message, config-layer robustness for `list`/`datetime`/non-`str` inputs,
+  caching `TariffSchedule.plan_for`'s date list and/or `TariffPlan.zone_for_hour`'s lookup if 005/006
+  profiling shows it matters, `TariffPlan.name` blank-string validation, and the SPEC §3 JSON example
+  showing `"price": 0.0` instead of a string. None of these were required by the review; volume-tier
+  computation, weekday filters, config flow and storage-format mapping remain explicitly out of scope
+  per the task file.
