@@ -27,6 +27,14 @@ Performance note: the repo stays a bind mount of the Windows checkout for tool c
 Python venv, uv cache and Home Assistant runtime data live inside the container (named Docker volumes /
 `/opt/venv`), so they are not slowed down by the Windows bind mount.
 
+### Troubleshooting
+
+- **"Reopen in Container" fails with an error mentioning
+  `accessing specified distro mount service ... /run/guest-services/distro-services/<distro>.sock`:** this is
+  a Docker Desktop / WSL2 integration issue, not specific to this repo. Fix either by setting the VS Code user
+  setting `"dev.containers.mountWaylandSocket": false`, or by enabling the affected WSL distro under Docker
+  Desktop → Settings → Resources → WSL integration.
+
 ## License
 
 [MIT](LICENSE)
