@@ -1,0 +1,6 @@
+#!/bin/sh
+# Linux / container / CI: run all tests with the engine coverage gate.
+set -eu
+cd "$(dirname "$0")/.."
+
+uv run --group ha pytest --cov=custom_components/energy_cost_stats/engine --cov-report=term-missing --cov-fail-under=95 "$@"

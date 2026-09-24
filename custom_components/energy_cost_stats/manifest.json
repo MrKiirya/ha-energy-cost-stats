@@ -1,0 +1,13 @@
+{
+  "domain": "energy_cost_stats",
+  "name": "Energy Cost Stats",
+  "codeowners": ["@MrKiirya"],
+  "config_flow": false,
+  "dependencies": ["recorder"],
+  "documentation": "https://github.com/MrKiirya/ha-energy-cost-stats",
+  "integration_type": "service",
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/MrKiirya/ha-energy-cost-stats/issues",
+  "requirements": [],
+  "version": "0.1.0"
+}
