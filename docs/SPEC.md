@@ -29,32 +29,59 @@ three-zone residential tariffs.
   Optional toggle (off by default) for per-device cost series. External statistics are not entities.
 
 ## 3. Tariff data model
-Versioned **tariff plans**; a plan is valid from `valid_from` until the next plan's `valid_from` (no end date).
-Any change (even price only) = new plan (UX: "duplicate current plan").
+Versioned **tariff plans**. `valid_from` is a *local* calendar date; the plan applies from local midnight
+of that date until the next plan's `valid_from`; there is no end date. Any change, even price only, is a
+new plan (UX: "duplicate current plan"). Two plans with the same `valid_from` are invalid.
 ```json
 { "valid_from": "2026-07-01", "name": "Two-zone",
   "zones": [
     { "key": "t1", "name": "Day",   "price": 0.0, "periods": [["07:00","23:00"]] },
     { "key": "t2", "name": "Night", "price": 0.0, "periods": [["23:00","07:00"]] } ] }
 ```
-- `key` is stable (t1/t2/t3); `name` is display-only (renaming must not break statistics).
-- Validation: zones cover 24h exactly once; boundaries on whole hours (hourly statistics limit).
-- Presets (editable after creation): single-rate; RU two-zone (day 7–23, night 23–7);
-  RU three-zone (peak 7–10 & 17–21, semi-peak 10–17 & 21–23, night 23–7). Verify RU zones before shipping.
-- Leave room for an optional weekday filter (foreign tariffs) and volume-tier rules later.
+- Periods are half-open whole-hour intervals `[start, end)`; `end < start` crosses midnight (e.g.
+  `["23:00","07:00"]` = hours 23, 0, 1, ..., 6); `00:00`/`24:00` as **end** means end of day; the full
+  day is `00:00–24:00`. Boundaries are whole hours only (hourly statistics limit).
+- `key` is stable (used in statistics and reports) and follows the labels on Russian multi-tariff meters:
+  `t0` = single-rate (a distinct key, never mixed with the two-zone `t1` in multi-plan reports), `t1` =
+  day/peak, `t2` = night, `t3` = semi-peak. `name` is display-only (renaming must not break statistics).
+- Prices are `Decimal` and must be `>= 0` (0 = free hours is allowed); money is `Decimal` everywhere in
+  the engine, never `float`; rounding to 2 decimals happens only at report output.
+- Validation: zones cover 24h exactly once (no gap, no overlap); boundaries on whole hours.
+- Presets (editable after creation): single-rate (`t0`); RU two-zone (`t1` day 7–23, `t2` night 23–7);
+  RU three-zone (`t1` peak 7–10 & 17–21, `t3` semi-peak 10–17 & 21–23, `t2` night 23–7). Generic example
+  used throughout the tests: two-zone, day `10.30`, night `4.43` per kWh. Verify RU zones before shipping.
+- Leave room for an optional weekday filter (foreign tariffs) later.
+- Volume tiers ("consumption ranges"): RU residential tariffs sometimes price monthly household kWh in
+  bands (e.g. ≤ 3900, 3901–6000, > 6000 kWh/month). The model reserves two optional fields for this,
+  non-breaking to add later: `TariffPlan.volume_band_limits_kwh` (ascending upper limits of bands 1..n,
+  band n+1 unbounded) and `Zone.band_prices` (prices for bands 2..n+1; band 1 is `Zone.price`). Stage 1
+  uses only the first-band price (`Zone.price`) everywhere; band computation is not implemented. Future
+  method (not implemented yet): compute the household's monthly bill by bands, derive a blended per-zone
+  price for that month, apply it to all devices for that month.
 
 ## 4. Report output
 Rows per device (+ total, + optional "untracked" if a main meter is configured):
 kWh per zone, price per zone, cost per zone, totals. Groupings: hour/day/week/month/custom range.
 
 ## 5. Known pitfalls to handle
-- Statistics are UTC; zones are local time (`hass.config.time_zone`). DST days = 23/25 h.
+- Engine input is hourly deltas keyed by **UTC hour start**; zones, plan switches and groupings use local
+  time (IANA tz via `zoneinfo`); DST days have 23/25 hours and are handled; weeks start on Monday; months
+  are local calendar months; groupings: hour/day/week/month/custom range (+ totals).
 - Current hour isn't compiled into LTS yet → use short-term (5-min) statistics for "today" (kept ~10 days).
-- Plugs report on thresholds/intervals → boundary misattribution; offline gaps dump deltas into one hour.
-- Filter negative/absurd deltas; don't silently show partial data as zero — return explicit partial/missing state.
+- Data quality (implemented in task 007): an offline gap followed by a catch-up delta is spread evenly over
+  the gap hours plus the catch-up hour, each hour priced in its own zone, flagged "estimated". Negative
+  deltas and deltas above a per-device limit (default 4 kWh/h ≈ a 16 A socket at 3.7 kW; global setting;
+  per-device override or disable) are excluded and reported (count, kWh, when), flagged "excluded".
+  Missing data is always explicit (missing/partial), never a silent zero.
+- Known limitation: plugs that report late across a zone boundary put some kWh into the wrong zone
+  (boundary misattribution). The engine cannot detect this from hourly statistics.
+- Meter resets of `total_increasing` sensors are already handled by HA when it compiles the statistics
+  `change`. Small drops (< 10 %) are not treated as resets and appear as negative deltas (excluded above).
 - Avoid double counting when a device is nested under another meter (`included_in_stat`-style relation).
 - Renamed entity_id → statistics stay on the old statistic_id.
 - Recorder statistics API is internal and changes between HA releases — isolate it behind one adapter module.
+- Out of stage 1: main meter / "untracked" row, nested-meter de-duplication, short-term statistics for the
+  current hour (the engine accepts whatever hours it is given).
 
 ## 6. Home Assistant compatibility
 Minimum supported version: **2025.4**. Tested in CI against the minimum and the latest release
