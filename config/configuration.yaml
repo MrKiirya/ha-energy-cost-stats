@@ -1,0 +1,16 @@
+# Dev Home Assistant instance for this integration. See script/develop.
+# https://www.home-assistant.io/integrations/default_config/
+default_config:
+
+homeassistant:
+  debug: true
+
+logger:
+  default: info
+  logs:
+    custom_components.energy_cost_stats: debug
+
+# TODO(stage 2): remove this empty platform entry once the config flow lands;
+# it is only needed today because async_setup has no config schema fields of
+# its own (see custom_components/energy_cost_stats/__init__.py).
+energy_cost_stats:

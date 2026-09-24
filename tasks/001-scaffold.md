@@ -1,6 +1,6 @@
 # 001 — Project scaffold (uv, scripts, integration skeleton, smoke tests)
 
-Status: in-review
+Status: done
 Roadmap: SPEC §8 stage 0 (project setup), task 1 of 3 (001-scaffold, 002-devcontainer, 003-ci)
 Spec sections: SPEC §2 (architecture / layout), §6 (HA compatibility), §8 (roadmap); CLAUDE.md (principles, commands, test levels)
 

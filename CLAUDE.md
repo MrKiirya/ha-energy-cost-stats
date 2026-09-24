@@ -17,6 +17,14 @@ Full product spec: [docs/SPEC.md](docs/SPEC.md) — read the sections your task 
 - **Hybrid setup.** Engine unit tests and ruff run natively on any OS (incl. Windows): `uv sync` installs
   tooling only, no Home Assistant. Anything that needs HA — integration tests, pyright, dev HA — runs in the
   Linux **devcontainer** / CI, where `uv sync --group ha` adds Home Assistant.
+- **Entering the devcontainer.** VS Code: "Reopen in Container" (needs Docker Desktop with Linux containers).
+  Headless: `npx @devcontainers/cli up|exec --workspace-folder .` (needs Node/npx on the host).
+- Inside the container: the uv-managed venv lives at `/opt/venv`, the uv package cache in the named Docker
+  volume `energy-cost-stats-uv-cache` — neither ever touches the Windows checkout.
+- `config/` holds the dev Home Assistant runtime data (SQLite DB, `.storage/`, logs); it is git-ignored except
+  the committed `config/configuration.yaml`. In the devcontainer this runtime data actually lives in the named
+  volume `energy-cost-stats-ha-config` (`HA_CONFIG_DIR`), which `script/develop` links to `config/configuration.yaml`
+  on every start so repo edits take effect without polluting the Windows checkout.
 - Python **3.14** (dev, latest HA); CI also runs minimum HA **2025.4** on Python **3.13**.
 - Python deps via **uv**; card via **npm** (Node 24 LTS).
 
@@ -34,10 +42,19 @@ the opt-in `ha` dependency group.
 | Lint + format check | either | `uv run ruff check .` / `uv run ruff format --check .` (Windows), `script/lint` (Linux container / CI) |
 | Type check | Linux container / CI | `uv run --group ha pyright` |
 | Card tests / build | stage 4 | `npm test` / `npm run build` (in `frontend/`) |
-| Run dev HA | Linux container / CI, verified in 002-devcontainer | `script/develop` |
+| Run dev HA | devcontainer | `script/develop` |
+| Smoke-test dev HA | devcontainer / CI | `script/smoke-develop` |
+| Open / check devcontainer headlessly | Windows host (Node/npx) | `npx @devcontainers/cli up --workspace-folder .` / `npx @devcontainers/cli exec --workspace-folder . <cmd>` |
 
 On Windows native, `uv run pytest -m integration` and `-m golden` exit with code 5 ("no tests ran";
 `tests/integration` is ignored because the HA test harness isn't installed) instead of failing.
+
+**Never run a bare `uv sync` in the container while a dev HA (`script/develop`) is running.** `uv sync` is an
+exact sync: it removes any package not in `uv.lock`, including the runtime requirements Home Assistant (or
+`script/setup`, see below) installed into the venv outside the lock. Racing a live HA startup with a concurrent
+`uv sync` can strip a package HA just installed and push the instance into recovery mode. Use `script/setup`
+instead — besides syncing, it pre-installs `default_config:`'s runtime requirements once, up front (see
+`script/prefetch_ha_requirements.py`), so `script/develop` normally needs no runtime installs at all.
 
 ## Test levels
 - `unit` — engine only, pure pytest, no HA. Coverage gate ≥ 95% for `engine/`. Unit tests import `engine…`
@@ -68,6 +85,8 @@ Task and review files are public too — use generic examples.
 - Only the main session runs git write operations; subagents never commit, push or open PRs.
 - Never rewrite published history (`push --force`, `rebase`/`reset` of pushed commits) without being asked.
 - Commit messages: Conventional Commits (`feat:`, `fix:`, `test:`, `docs:`, `chore:`, `ci:`, `refactor:`).
+- Split a task branch into **several logical commits** (tests, implementation, docs, task/review files) so the
+  PR reads commit by commit; PRs are opened as drafts and squash-merged after the human's review.
 - No local git pre-commit hooks (commits may be made from a Windows GUI client); formatting is enforced
   by Claude Code hooks and CI.
 - Personal, machine-local instructions go to the git-ignored `CLAUDE.local.md`.

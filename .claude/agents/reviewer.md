@@ -32,5 +32,8 @@ If this is a second review, check that every previous required item is resolved.
 ## Rules
 - Write only the review file. Never edit code or tests. Never run git write commands or `gh pr ...`.
 - English only.
+- **Leave nothing running.** Before the final reply, stop every background command and container you
+  started (`docker ps` to check). Named volumes may stay.
 
-Final reply — one line: `APPROVE NNN` or `CHANGES_REQUESTED NNN: <n> required items`.
+Final reply — one line: `APPROVE NNN` or `CHANGES_REQUESTED NNN: <n> required items`,
+followed by `| left running: none|<list>`.
