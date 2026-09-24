@@ -25,6 +25,10 @@ dist/
 config/*
 !config/configuration.yaml
 
+# Real statistics exports from the author's HA (private: reveal presence/usage patterns).
+# Commit only anonymized fixtures outside this folder.
+tests/fixtures/private/
+
 # Secrets
 .env
 .env.*
@@ -32,6 +36,7 @@ secrets.yaml
 
 # Claude Code: personal, machine-local settings
 .claude/settings.local.json
+CLAUDE.local.md
 
 # IDE / OS
 .vscode/*
