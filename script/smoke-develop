@@ -44,13 +44,26 @@ cp config/configuration.yaml "$TMP_DIR/configuration.yaml"
 HA_CONFIG_DIR="$TMP_DIR" sh script/develop >"$LOG_FILE" 2>&1 &
 HASS_PID=$!
 
-# Wait for both: HTTP 200 on :8123 (the frontend stage) and a log line showing
+# Wait for HTTP 200 on :8123 (the frontend stage) and a log line showing
 # energy_cost_stats was set up. The custom integration is set up in a later
 # bootstrap stage than the frontend/http domain, so a single check right after
 # the port opens is too early; poll both conditions in the same loop.
+#
+# Neither is enough on its own to declare success: Home Assistant only decides
+# whether to fall back to "recovery mode" (a stripped-down restart without
+# custom integrations, triggered when a CRITICAL_INTEGRATIONS domain such as
+# `frontend` didn't load) at the very end of its bootstrap, in
+# "Home Assistant initialized in ...s" -- well after the port opens and
+# energy_cost_stats sets up on the *first* (possibly doomed) attempt. Exiting
+# as soon as the early signals show up would report a false OK for a run that
+# later fell back to recovery mode. So keep polling for the recovery-mode
+# marker and the "initialized" marker too, and only declare success once
+# bootstrap is fully finished with no recovery-mode fallback recorded anywhere
+# in the log.
 elapsed=0
 port_ready=0
 integration_ready=0
+bootstrap_done=0
 while [ "$elapsed" -lt "$SMOKE_TIMEOUT" ]; do
     if ! kill -0 "$HASS_PID" 2>/dev/null; then
         echo "script/develop exited before finishing startup." >&2
@@ -58,12 +71,10 @@ while [ "$elapsed" -lt "$SMOKE_TIMEOUT" ]; do
         exit 1
     fi
 
-    if [ "$port_ready" -ne 1 ] && curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8123/manifest.json" 2>/dev/null | grep -q "^200$"; then
-        port_ready=1
-    fi
-
-    if grep -qE "Setting up energy_cost_stats|Setup of domain energy_cost_stats" "$LOG_FILE"; then
-        integration_ready=1
+    if grep -qE "Activating recovery mode" "$LOG_FILE"; then
+        echo "Home Assistant fell back to recovery mode (a required domain, e.g. frontend, did not load)." >&2
+        tail -n 150 "$LOG_FILE" >&2 || true
+        exit 1
     fi
 
     if grep -qE "Setup failed for .*energy_cost_stats|Error during setup of component energy_cost_stats|Unable to (find|prepare|set up) .*energy_cost_stats" "$LOG_FILE"; then
@@ -72,7 +83,17 @@ while [ "$elapsed" -lt "$SMOKE_TIMEOUT" ]; do
         exit 1
     fi
 
-    if [ "$port_ready" -eq 1 ] && [ "$integration_ready" -eq 1 ]; then
+    if [ "$port_ready" -ne 1 ] && curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8123/manifest.json" 2>/dev/null | grep -q "^200$"; then
+        port_ready=1
+    fi
+
+    if [ "$integration_ready" -ne 1 ] && grep -qE "Setting up energy_cost_stats|Setup of domain energy_cost_stats" "$LOG_FILE"; then
+        integration_ready=1
+        integration_line="$(grep -E "Setting up energy_cost_stats|Setup of domain energy_cost_stats" "$LOG_FILE" | head -n 1)"
+    fi
+
+    if grep -qE "Home Assistant initialized in" "$LOG_FILE"; then
+        bootstrap_done=1
         break
     fi
 
@@ -92,5 +113,20 @@ if [ "$integration_ready" -ne 1 ]; then
     exit 1
 fi
 
-echo "OK: Home Assistant answered on :8123 and energy_cost_stats set up cleanly."
+if [ "$bootstrap_done" -ne 1 ]; then
+    echo "Home Assistant did not finish bootstrap (\"Home Assistant initialized in ...s\") within ${SMOKE_TIMEOUT}s." >&2
+    tail -n 100 "$LOG_FILE" >&2 || true
+    exit 1
+fi
+
+# Re-check after full bootstrap: recovery mode can in principle only appear
+# once bootstrap decides to fall back, which is also when "initialized" is
+# logged, so re-scanning the full log here catches any last-moment fallback.
+if grep -qE "Activating recovery mode" "$LOG_FILE"; then
+    echo "Home Assistant fell back to recovery mode (a required domain, e.g. frontend, did not load)." >&2
+    tail -n 150 "$LOG_FILE" >&2 || true
+    exit 1
+fi
+
+echo "OK: HTTP 200 on :8123; log line: ${integration_line}"
 exit 0
