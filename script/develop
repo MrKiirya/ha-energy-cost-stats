@@ -11,10 +11,28 @@ case "$(uname 2>/dev/null || echo unknown)" in
         ;;
 esac
 
-export PYTHONPATH="${PYTHONPATH:-}:$(pwd)/custom_components"
+# Put the repo root on PYTHONPATH so HA's loader imports the repo's
+# custom_components package (a regular package, see tasks/001-scaffold.md decision 7).
+# An empty PYTHONPATH here would leave a leading ":" (Python reads that as "."),
+# which happened to work by accident with the previous "$(pwd)/custom_components" form.
+export PYTHONPATH="$(pwd)${PYTHONPATH:+:$PYTHONPATH}"
 
-if [ ! -d config ]; then
-    uv run --group ha hass --script ensure_config -c config
+CONFIG_DIR="${HA_CONFIG_DIR:-config}"
+
+if [ ! -f "$CONFIG_DIR/configuration.yaml" ]; then
+    uv run --group ha hass --script ensure_config -c "$CONFIG_DIR"
 fi
 
-uv run --group ha hass --config config --debug
+# When HA_CONFIG_DIR points outside the repo (the devcontainer's named volume for
+# runtime data), re-link the committed config/configuration.yaml into it on every
+# start, so edits made in the repo take effect immediately and no runtime data ever
+# lands in the Windows checkout (tasks/002-devcontainer.md decision 2).
+if [ "$CONFIG_DIR" != "config" ]; then
+    ln -sf "$(pwd)/config/configuration.yaml" "$CONFIG_DIR/configuration.yaml"
+fi
+
+# exec (not a plain call): replace this shell process with uv/hass instead of
+# forking a child, so a signal sent to this script's pid reaches the hass
+# process directly through uv's signal forwarding (script/smoke-develop relies
+# on this to stop the dev instance cleanly).
+exec uv run --group ha hass --config "$CONFIG_DIR" --debug
