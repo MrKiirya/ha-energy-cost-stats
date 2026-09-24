@@ -17,6 +17,16 @@ Two setups, managed with [uv](https://docs.astral.sh/uv/):
 
 See [CLAUDE.md](CLAUDE.md) for the full command reference and project conventions.
 
+### Devcontainer (recommended for full setup)
+
+Prerequisites: Docker Desktop (Linux containers) and the VS Code Dev Containers extension.
+Open the repo in VS Code and pick "Reopen in Container" to get Python 3.14, uv, Node 24 and all
+dependency groups installed automatically. Inside the container, `script/develop` starts a dev Home
+Assistant with this integration loaded at <http://localhost:8123>.
+Performance note: the repo stays a bind mount of the Windows checkout for tool compatibility, but the
+Python venv, uv cache and Home Assistant runtime data live inside the container (named Docker volumes /
+`/opt/venv`), so they are not slowed down by the Windows bind mount.
+
 ## License
 
 [MIT](LICENSE)
