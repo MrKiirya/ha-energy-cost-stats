@@ -31,6 +31,8 @@ You implement exactly one task file, given to you by path.
 - Never weaken or delete a test to make it pass; if a test in the task is wrong, explain in the notes.
 - English only in code, comments and docs. Generic example data only.
 - If blocked (unclear spec, failing environment), stop and report instead of guessing.
+- **No loops.** If the same check fails 3 times, or you are trying a 3rd hypothesis for the same problem,
+  stop and report `BLOCKED` with the evidence collected so far — do not keep retrying.
 - **Leave nothing running.** Before the final reply, stop every background command you started (long
   searches, servers, `hass`) and every container you started (`docker ps` to check). Avoid disk-wide
   searches like `find /` on a Windows host — they crawl every drive; search specific directories instead.
