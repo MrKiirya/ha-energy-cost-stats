@@ -1,0 +1,34 @@
+name: HA latest canary
+
+on:
+  schedule:
+    - cron: "0 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  canary:
+    name: canary (py3.14, HA upgraded)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      UV_PYTHON_PREFERENCE: only-managed
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+          python-version: "3.14"
+      # Upgrades only the 3.14 fork of pytest-homeassistant-custom-component in-memory; nothing
+      # is committed. A failure here means the next HA release breaks us — open a fix task
+      # before bumping uv.lock for real.
+      - run: uv lock --upgrade-package pytest-homeassistant-custom-component
+      - run: sh script/setup
+      - name: Print HA version
+        run: |
+          version="$(uv run --group ha python -c "import homeassistant.const as c; print(c.__version__)")"
+          echo "Home Assistant version: $version" >> "$GITHUB_STEP_SUMMARY"
+      - run: uv run --group ha pyright
+      - run: sh script/test

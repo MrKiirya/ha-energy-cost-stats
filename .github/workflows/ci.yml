@@ -1,0 +1,88 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_LOCKED: "1"
+  UV_PYTHON_PREFERENCE: only-managed
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+          python-version: "3.14"
+      - run: uv sync
+      - run: uv lock --check
+      - run: sh script/lint
+
+  windows:
+    name: unit (windows, no HA)
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+          python-version: "3.14"
+      - run: uv sync
+      - run: uv run pytest -m unit
+      - name: Integration tests ignored (no HA on Windows)
+        shell: pwsh
+        run: |
+          uv run pytest -m integration
+          if ($LASTEXITCODE -ne 5) {
+            Write-Error "expected exit code 5 (no tests ran), got $LASTEXITCODE"
+            exit 1
+          }
+          exit 0
+
+  test:
+    name: test (py${{ matrix.python }}, HA ${{ matrix.ha }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python: "3.13"
+            ha: "2025.4.0"
+          - python: "3.14"
+            ha: "latest"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          enable-cache: true
+          python-version: ${{ matrix.python }}
+      - run: sh script/setup
+      - name: Assert HA version
+        run: |
+          version="$(uv run --group ha python -c "import homeassistant.const as c; print(c.__version__)")"
+          echo "Home Assistant version: $version" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${{ matrix.ha }}" != "latest" ] && [ "$version" != "${{ matrix.ha }}" ]; then
+            echo "expected HA ${{ matrix.ha }}, got $version" >&2
+            exit 1
+          fi
+      - run: uv run --group ha pyright
+      - run: sh script/test
+
+  # Card (frontend/) job: added in roadmap stage 4.
