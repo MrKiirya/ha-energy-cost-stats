@@ -9,3 +9,23 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 
 uv sync --group ha "$@"
+
+# Pre-install the runtime requirements Home Assistant would otherwise install
+# itself when script/develop first starts default_config: (frontend, camera
+# codecs, discovery protocols, ...). Doing it here, once, after the exact sync
+# above, avoids a live `python -m uv pip install` racing a concurrent `uv sync`
+# elsewhere -- that race put a dev instance into recovery mode once (see
+# tasks/002-devcontainer.md, "Human report -- HA ends in recovery mode").
+#
+# --no-sync: some of these requirements (e.g. bleak-retry-connector,
+# habluetooth) are *also* transitive dependencies of the `ha` group itself
+# (pytest-homeassistant-custom-component pulls them in for its own test
+# harness), pinned there to a different version than the one Home Assistant's
+# manifests require. A syncing `uv run` would silently revert this script's
+# install back to the `ha` group's version right before it runs. The `uv sync
+# --group ha` right above already put the venv in the exact state the lock
+# wants, so skipping the sync here is safe and avoids that revert.
+# "$@" forwarded again: e.g. `--python 3.13` (the min-HA matrix leg) must
+# match the interpreter the sync above used, or `--no-sync` falls back to the
+# existing venv with only a warning instead of the requested interpreter.
+uv run --no-sync --group ha "$@" python script/prefetch_ha_requirements.py
