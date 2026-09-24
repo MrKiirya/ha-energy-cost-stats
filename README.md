@@ -11,9 +11,11 @@ retroactively, from Home Assistant's existing long-term statistics, without crea
 Two setups, managed with [uv](https://docs.astral.sh/uv/):
 - **Windows native:** `uv sync` installs cross-platform tooling only (pytest, ruff, pyright); run engine
   unit tests and lint here (`uv run pytest -m unit`, `uv run ruff check .`).
-- **Linux container / CI:** `script/setup` (= `uv sync --group ha`) additionally installs Home Assistant;
-  run integration tests, `pyright` and the dev HA instance here (`script/test`, `script/lint`,
-  `uv run --group ha pytest -m integration`).
+- **Linux container / CI:** `script/setup` additionally installs Home Assistant (`uv sync --group ha`) and
+  pre-installs the runtime requirements `default_config:` needs, so `script/develop` doesn't install anything
+  live; run integration tests, `pyright` and the dev HA instance here (`script/test`, `script/lint`,
+  `uv run --group ha pytest -m integration`). Never run a bare `uv sync` here while `script/develop` is
+  running — use `script/setup` instead (see CLAUDE.md).
 
 See [CLAUDE.md](CLAUDE.md) for the full command reference and project conventions.
 

@@ -49,6 +49,13 @@ the opt-in `ha` dependency group.
 On Windows native, `uv run pytest -m integration` and `-m golden` exit with code 5 ("no tests ran";
 `tests/integration` is ignored because the HA test harness isn't installed) instead of failing.
 
+**Never run a bare `uv sync` in the container while a dev HA (`script/develop`) is running.** `uv sync` is an
+exact sync: it removes any package not in `uv.lock`, including the runtime requirements Home Assistant (or
+`script/setup`, see below) installed into the venv outside the lock. Racing a live HA startup with a concurrent
+`uv sync` can strip a package HA just installed and push the instance into recovery mode. Use `script/setup`
+instead — besides syncing, it pre-installs `default_config:`'s runtime requirements once, up front (see
+`script/prefetch_ha_requirements.py`), so `script/develop` normally needs no runtime installs at all.
+
 ## Test levels
 - `unit` — engine only, pure pytest, no HA. Coverage gate ≥ 95% for `engine/`. Unit tests import `engine…`
   only, never `custom_components.energy_cost_stats…` (dual-name caveat: the same files are also importable
