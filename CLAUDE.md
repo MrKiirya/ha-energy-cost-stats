@@ -35,6 +35,7 @@ the opt-in `ha` dependency group.
 | Type check | Linux container / CI | `uv run --group ha pyright` |
 | Card tests / build | stage 4 | `npm test` / `npm run build` (in `frontend/`) |
 | Run dev HA | Linux container / CI, verified in 002-devcontainer | `script/develop` |
+| Lint GitHub workflows | either (Docker) | `docker run --rm -v "${PWD}:/repo" --workdir /repo rhysd/actionlint:latest -color` |
 
 On Windows native, `uv run pytest -m integration` and `-m golden` exit with code 5 ("no tests ran";
 `tests/integration` is ignored because the HA test harness isn't installed) instead of failing.
@@ -71,6 +72,21 @@ Task and review files are public too — use generic examples.
 - No local git pre-commit hooks (commits may be made from a Windows GUI client); formatting is enforced
   by Claude Code hooks and CI.
 - Personal, machine-local instructions go to the git-ignored `CLAUDE.local.md`.
+- **CI workflows:** `.github/workflows/ci.yml` (`lint`, `windows`, `test` matrix: py3.13/HA 2025.4.0 and
+  py3.14/HA latest) and `.github/workflows/validate.yml` (`hassfest`, `hacs`) run on every PR and push to
+  `master`. `.github/workflows/ha-latest-canary.yml` runs weekly (not required) and warns when the next HA
+  release would break the latest-HA leg before we bump the pin.
+- **Required checks on `master`:** `lint`, `unit (windows, no HA)`, `test (py3.13, HA 2025.4.0)`,
+  `test (py3.14, HA latest)`, `hassfest`, `hacs` — see `.github/rulesets/master.json`. Renaming a job means
+  updating both the workflow `name:` and the ruleset, then re-applying it:
+  `gh api --method PUT repos/MrKiirya/ha-energy-cost-stats/rulesets/<id> --input .github/rulesets/master.json`.
+- **Bumping latest HA:** `uv lock --upgrade-package pytest-homeassistant-custom-component` (moves only the
+  3.14 fork; the 3.13 fork is pinned `==` and does not move), then `script/test` in the container, then a
+  `chore(deps):` PR. The canary workflow does this upgrade in CI without committing, as an early warning.
+- **Pinning policy:** third-party actions that execute code (`actions/checkout`, `astral-sh/setup-uv`) are
+  pinned by full commit SHA with a `# vX.Y.Z` comment; Dependabot (`github-actions` ecosystem) bumps them.
+  `hacs/action@main` and `home-assistant/actions/hassfest@master` are the only allowed exceptions (their
+  images float regardless of the action ref, and validation must track current upstream rules).
 
 ## Language
 Everything in the repo — code, comments, docs, task files, commit messages, PRs — is **English**.
@@ -86,5 +102,5 @@ Everything in the repo — code, comments, docs, task files, commit messages, PR
 - `reviewer` (opus, fresh context): checks the diff against the task file, runs tests and lint,
   writes `tasks/NNN-review.md` with verdict `APPROVE` / `CHANGES_REQUESTED`.
 - Max 2 review iterations, then escalate to the human.
-- **Light path:** trivial changes (typos, version bumps, one-line config) are done directly by the
-  main session without planner/reviewer.
+- **Light path:** trivial changes (typos, version bumps, one-line config) skip planner/reviewer, but
+  still go through a PR — every change to `master` goes through a PR (no bypass actors in the ruleset).
