@@ -356,16 +356,90 @@ None — resolved by the human:
   `.venv/bin/` appeared on the host, and `git status --porcelain` on the host shows only the files this task
   intentionally created or modified.
 
+### Human report — HA ends in recovery mode (investigated, root cause NOT confirmed)
+A human running "Reopen in Container" reported that `script/develop` starts, `energy_cost_stats` sets up, but
+HA later ends up in **recovery mode**: `ModuleNotFoundError` for `turbojpeg`/`camera`, `rf_protocols`,
+`infrared_protocols`, `av`/`stream`, then `default_config` fails its dependents, then
+`Detected that frontend did not load. Activating recovery mode`.
+
+**Given hypothesis (HA installs runtime requirements via `python -m uv`, and `uv` isn't installed as a Python
+package in `/opt/venv`) — checked and REFUTED**, with direct evidence:
+- `uv.lock` lists `uv` as a dependency of the `homeassistant` package itself (not just of PHCC/dev tooling),
+  for **both** matrix legs: `uv==0.6.10` under the `python_full_version < '3.14'` resolution (→ HA 2025.4.0)
+  and `uv==0.12.5` under `python_full_version >= '3.14.2'` (→ latest HA). So `uv` is always present in the
+  `ha` group regardless of which HA version is locked; nothing to add there.
+- Inside a real devcontainer, `/opt/venv/bin/python -m uv --version` works, and `homeassistant/util/package.py`
+  (`install_package()`) does call `sys.executable -m uv pip install ...` exactly as suspected — but the calls
+  themselves succeed. Manually running the exact same command HA uses
+  (`python -m uv pip install rf-protocols==4.3.0 --index-strategy unsafe-first-match --upgrade --target <dir>`)
+  installed the package correctly on the first try.
+
+**Reproduction attempts — all failed to reproduce recovery mode**, i.e. the failure could not be forced on this
+machine:
+1. Fresh `energy-cost-stats-ha-config` volume only (uv cache still warm from earlier verification) →
+   `script/develop` completed normally, only the expected/documented `go2rtc` error (no Docker socket for its
+   bundled binary; unrelated to this bug, already covered by decision 6).
+2. Fully fresh devcontainer: removed **both** named volumes (`energy-cost-stats-uv-cache` **and**
+   `energy-cost-stats-ha-config`), rebuilt/recreated the container from scratch, ran `script/develop` with a
+   cold uv cache (so every runtime requirement, including `av`, `PyTurboJPEG`, `ha-ffmpeg`, `habluetooth`, …,
+   had to be downloaded fresh) → completed normally in ~88s, `Home Assistant initialized in 87.86s`, no
+   recovery mode, only the same `go2rtc` error.
+3. `ecs-constrained-test`: a throwaway plain `docker run` (not the devcontainer, so as not to touch
+   `devcontainer.json`) from the same built image, deliberately resource-constrained to `--memory=1.2g
+   --cpus=1` (this repo's normal devcontainer has no such limits; this was to test whether the human's
+   failure could be a resource-contention effect of Home Assistant's highly parallel first-boot requirement
+   install burst — many `SyncWorker` threads each shelling out to `python -m uv pip install <pkg>`
+   concurrently against the live venv). Fresh volumes again. `script/setup` and `script/develop` both
+   completed normally under this constraint too (`Home Assistant initialized in 114.80s`, peak ~67% of the
+   1.2 GiB memory limit, 0 CPU% at the sampling point — never throttled hard enough to fail). Removed after
+   the test; not part of the repo's normal setup.
+
+**Conclusion: root cause not identified/reproduced.** The specific packages the human's log named
+(`turbojpeg`/`PyTurboJPEG`, `av`) are genuinely part of `default_config`'s dependency chain (`stream`'s
+manifest requires `PyTurboJPEG==1.8.3`, `av==17.0.1`, `numpy==2.3.2`); `rf_protocols`/`infrared_protocols`
+belong to `radio_frequency`, which is **not** a `default_config` dependency and would only be pulled in by an
+auto-discovered device (SSDP/DHCP/zeroconf) — something a devcontainer bridged to a real home LAN could
+plausibly discover that this task's verification environment does not. Given repeated clean reproductions
+(including under artificial resource pressure) and this discovery-triggered detail, the most likely
+explanation is environment-specific (the human's LAN, network reliability to PyPI, or an interrupted earlier
+run corrupting a partially-installed package in the persistent `/opt/venv`), not a deterministic bug fixable
+by pinning a dependency in `pyproject.toml`/`uv.lock`/the Dockerfile — no such change was made, and
+`pyproject.toml`, `uv.lock` and `.devcontainer/Dockerfile` are untouched by this round (`uv lock --check`
+still passes).
+
+**Fix actually shipped this round: `script/smoke-develop` had a real, confirmed, independent bug that let
+exactly this failure mode go undetected.** The script declared success as soon as (a) HTTP 200 answered on
+:8123 and (b) `energy_cost_stats` appeared as "set up" in the log — both of which happen during the **first**
+bootstrap attempt, well before Home Assistant's own recovery-mode decision (logged only once, at the very end
+of `async_setup_hass`, as `Home Assistant initialized in ...s`, alongside
+`Detected that <domain> did not load. Activating recovery mode` when a `CRITICAL_INTEGRATIONS` domain like
+`frontend` failed). So the previous script could report `OK` for a run that later fell back to recovery mode.
+Confirmed with a synthetic log fixture reproducing the human's exact signature (early
+`Setting up energy_cost_stats` + port 200, later `Activating recovery mode`): the old check logic reported
+`OK` against it; the fixed logic (poll for `Activating recovery mode` on every iteration, only declare success
+after `Home Assistant initialized in ...s` appears, then re-check for recovery mode once more) correctly
+fails against the same fixture, and still passes on two real, healthy `script/smoke-develop` runs in the
+devcontainer (`OK: HTTP 200 on :8123; log line: ... Setting up energy_cost_stats`). This is the actionable,
+verified fix for this round; it also now prints the matched HTTP code / log line (review round 1 suggestion 1
+is resolved as a side effect).
+
 ## Follow-ups
 - Stage 4: named volume for `frontend/node_modules` in `devcontainer.json`.
 - 003-ci: the min-HA (Python 3.13) matrix leg needs its own environment (fresh container or
   `UV_PROJECT_ENVIRONMENT` override), since the devcontainer's shared `/opt/venv` cannot be recreated for a
   different Python version from inside a running container (see Implementation notes).
 - Review round 1 suggestions not applied in this round (not required, left for a follow-up pass or the
-  human's judgment): (1) `script/smoke-develop` prints only a generic OK line, not the HTTP code / matched
-  setup log line; (2) `trap cleanup EXIT INT TERM` can double-run cleanup on INT/TERM — prefer
+  human's judgment): (2) `trap cleanup EXIT INT TERM` can double-run cleanup on INT/TERM — prefer
   `trap cleanup EXIT` + dedicated `INT`/`TERM` traps that just `exit`; (3) the `KILL` grace-period fallback
   signals `uv`, not `hass`, directly — consider `setsid`/process-group signalling for extra robustness; (6)
   whether to commit the CLI-generated `.devcontainer/devcontainer-lock.json` (currently untracked) is an open
   decision; (7) the CLAUDE.md `config/` bullet could be shortened to one sentence per the review's suggested
   wording.
+- **Human recovery-mode report: root cause unconfirmed** (see the "Human report" note above). If it recurs,
+  the strengthened `script/smoke-develop` will now catch it and print the full log; worth asking the human
+  next time whether real devices on their LAN were discovered (check the log for `radio_frequency` /
+  `rf_protocols` around the failure) and whether the devcontainer had been interrupted/force-closed during an
+  earlier first boot (which could leave a partially-installed package in the persistent `/opt/venv`, since
+  it lives in the container's writable layer and survives across `script/develop` runs within the same
+  container). A clean fix for that specific scenario, if confirmed, would be `rm -rf /opt/venv` + re-run
+  `script/setup` (rebuilding the venv from the lock) rather than a code change.
