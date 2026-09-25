@@ -56,6 +56,8 @@ exact sync: it removes any package not in `uv.lock`, including the runtime requi
 `uv sync` can strip a package HA just installed and push the instance into recovery mode. Use `script/setup`
 instead — besides syncing, it pre-installs `default_config:`'s runtime requirements once, up front (see
 `script/prefetch_ha_requirements.py`), so `script/develop` normally needs no runtime installs at all.
+`script/develop` re-runs the pre-install at every start, which also covers config-entry integrations and
+packages reverted by `uv run`.
 
 ## Test levels
 - `unit` — engine only, pure pytest, no HA. Coverage gate ≥ 95% for `engine/`. Unit tests import `engine…`
@@ -102,6 +104,11 @@ Task and review files are public too — use generic examples.
 - **Bumping latest HA:** `uv lock --upgrade-package pytest-homeassistant-custom-component` (moves only the
   3.14 fork; the 3.13 fork is pinned `==` and does not move), then `script/test` in the container, then a
   `chore(deps):` PR. The canary workflow does this upgrade in CI without committing, as an early warning.
+  Bump the go2rtc pin in `.devcontainer/Dockerfile` if `tests/integration/test_dev_env.py` fails.
+  The `ha` group pins `pycares<5` on the 3.13 fork only, so it resolves with `aiodns==3.2.0` (HA
+  2025.4.0's own pin): `pycares>=5` breaks that pairing's resolver (`Channel.getaddrinfo()` signature
+  change), which crashed go2rtc's version check and `default_config` in the devcontainer
+  (tasks/008-dev-ha-fixes.md Required 1). Revisit this pin if the 3.13 fork's `aiodns` version changes.
 - **Pinning policy:** third-party actions that execute code (`actions/checkout`, `astral-sh/setup-uv`) are
   pinned by full commit SHA with a `# vX.Y.Z` comment; Dependabot (`github-actions` ecosystem) bumps them.
   `hacs/action@main` and `home-assistant/actions/hassfest@master` are the only allowed exceptions (their
