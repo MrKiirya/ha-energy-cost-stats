@@ -266,6 +266,46 @@ None — resolved by the human (2026-09-25):
   concern for a `Mapping[datetime, Decimal]` parameter that untrusted config/adapter code populates), so
   strict pyright's "this is always true" is correct but the check must stay.
 
+## Implementation notes — review round 1 fixes
+- Restored the `guess = guess.replace(minute=0, second=0, microsecond=0)` round-down in
+  `local_day_start` (`timeutil.py`) that was missing from the working tree at the start of this round;
+  without it, `local_day_start` for a half-hour-offset zone (e.g. `Asia/Kolkata`) would return a UTC
+  instant on `xx:30`, which `to_utc_hour`/`ReportRequest`/`classify_hours` then reject. Also updated the
+  adjacent comment ("a handful of hours" → "any real UTC offset range", suggestion 6) since the search
+  already spans ±26 hours.
+- `docs/SPEC.md` §5: added a "Known limitation" bullet documenting the non-whole-hour UTC offset behavior
+  (local day/zone boundaries shift by the offset's minute remainder; no error raised). Mirrored a short
+  version in `classify_hours`'s docstring in `classify.py`.
+- `tests/unit/test_timeutil.py::test_local_day_start_property`: now also asserts
+  `to_utc_hour(start) == start` and `start.tzinfo is UTC` for every date/zone, catching removal of the
+  round-down above (confirmed it fails with the mutation applied, for the `Asia/Kolkata` case).
+- `tests/unit/test_classify.py::test_half_hour_offset_zone_kolkata` (new): classifies one local day in
+  `Asia/Kolkata`, asserts 24 hours, first hour's `local_start` is `00:30` on the requested date, and the
+  day/night zone split is still 16/8 (the RU two-zone boundaries shift by the same 30-minute remainder as
+  the day start, so the count is unaffected).
+- `tests/unit/test_classify.py::test_dst_fall_back_repeated_hour_berlin` (new): for the Berlin fall-back
+  day, asserts every hour's `local_start.astimezone(UTC) == utc_start` (via `astimezone`, not direct `==`,
+  since PEP 495 makes fold-ambiguous inter-zone equality always `False`), and that the two hours with
+  `local_start.hour == 2` have `utcoffset()` `+2h` then `+1h` in UTC order. Confirmed this fails if
+  `classify.py` drops `fold` (e.g. `hour.astimezone(tz).replace(fold=0)`).
+- `ReportRequest.grouping`: type widened to `Grouping | str` and `__post_init__` now normalizes via
+  `Grouping(self.grouping)`, raising a clear `ValueError` (listing the valid values) for anything else.
+  This makes `bucket_key`'s `is`-comparisons and its "unknown grouping" branch correct at runtime once
+  stage 3 passes JSON strings, per the reviewer's suggestion 3. Covered by
+  `test_report_request_grouping_accepts_enum_or_value_string` and
+  `test_report_request_grouping_rejects_unknown_value` in `test_models.py`.
+- Verified (native Windows): `uv run pytest -m unit --cov=... --cov-fail-under=95` → 155 passed, 100%
+  coverage; `uv run ruff check .` / `ruff format --check .` → clean; `uv run pyright
+  custom_components/energy_cost_stats/engine tests/unit` → 0 errors.
+
 ## Follow-ups
-- None identified; open questions in this task were fully resolved by the human before implementation
-  started.
+- Reviewer suggestion 1: widen the DST week-count test to a whole month and assert `Counter(...)[week_key]`
+  for the March/October DST weeks specifically, not just `len()` of an already-one-week window.
+- Reviewer suggestion 2: add `Coverage(24, 20, 0, 4, 0) → PARTIAL` (excluded-only) and
+  `Coverage(True, 1, 0, 0, 0) → ValueError` cases to `test_coverage_status`/`test_coverage_invariant_and_add`.
+- Reviewer suggestion 4: cache `TariffSchedule.plan_for`'s per-date lookup inside `classify_hours` if task
+  006 ends up classifying long windows repeatedly (currently ~2.3 µs/hour total, not a blocker).
+- Reviewer suggestion 5: add `match=` to the `pytest.raises` calls where one function raises for several
+  distinct reasons (e.g. `DeviceSeries.__post_init__`), to pin down which check fired.
+- Reviewer suggestion 7: note in `DeviceSeries`'s docstring that it holds a `MappingProxyType` and is
+  therefore unhashable / not `asdict()`-safe, so stage 3 should not try to serialize it directly.
