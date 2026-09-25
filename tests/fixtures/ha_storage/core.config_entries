@@ -1,0 +1,71 @@
+{
+    "version": 1,
+    "minor_version": 5,
+    "key": "core.config_entries",
+    "data": {
+        "entries": [
+            {
+                "entry_id": "01example0000000000000001",
+                "version": 1,
+                "minor_version": 1,
+                "domain": "google_translate",
+                "title": "Google Translate text-to-speech",
+                "data": {},
+                "options": {},
+                "pref_disable_new_entities": false,
+                "pref_disable_polling": false,
+                "source": "onboarding",
+                "unique_id": null,
+                "disabled_by": null,
+                "discovery_keys": {}
+            },
+            {
+                "entry_id": "01example0000000000000002",
+                "version": 1,
+                "minor_version": 1,
+                "domain": "met",
+                "title": "Met.no",
+                "data": {
+                    "track_home": true
+                },
+                "options": {},
+                "pref_disable_new_entities": false,
+                "pref_disable_polling": false,
+                "source": "onboarding",
+                "unique_id": null,
+                "disabled_by": null,
+                "discovery_keys": {}
+            },
+            {
+                "entry_id": "01example0000000000000003",
+                "version": 1,
+                "minor_version": 1,
+                "domain": "radio_browser",
+                "title": "Radio Browser",
+                "data": {},
+                "options": {},
+                "pref_disable_new_entities": false,
+                "pref_disable_polling": false,
+                "source": "onboarding",
+                "unique_id": null,
+                "disabled_by": "user",
+                "discovery_keys": {}
+            },
+            {
+                "entry_id": "01example0000000000000004",
+                "version": 1,
+                "minor_version": 1,
+                "domain": "google_translate",
+                "title": "Google Translate text-to-speech (duplicate)",
+                "data": {},
+                "options": {},
+                "pref_disable_new_entities": false,
+                "pref_disable_polling": false,
+                "source": "onboarding",
+                "unique_id": null,
+                "disabled_by": null,
+                "discovery_keys": {}
+            }
+        ]
+    }
+}

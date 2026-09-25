@@ -7,6 +7,7 @@ See tasks/002-devcontainer.md follow-up ("HA ends in recovery mode").
 
 import importlib.util
 import json
+import shutil
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "script" / "prefetch_ha_requirements.py"
 SETUP_SCRIPT = REPO_ROOT / "script" / "setup"
 DEVELOP_SCRIPT = REPO_ROOT / "script" / "develop"
+CONFIG_ENTRIES_FIXTURE = (
+    REPO_ROOT / "tests" / "fixtures" / "ha_storage" / "core.config_entries"
+)
 
 
 def _load_module():
@@ -351,3 +355,274 @@ def test_summarize_failures_via_fake_installer_non_critical_failure_continues(
     )
 
     assert exit_code == 0
+
+
+def test_config_entry_domains_from_fixture(tmp_path: Path):
+    storage_dir = tmp_path / ".storage"
+    storage_dir.mkdir(parents=True)
+    shutil.copy(CONFIG_ENTRIES_FIXTURE, storage_dir / "core.config_entries")
+
+    domains = prefetch.config_entry_domains(tmp_path)
+
+    assert domains == ["google_translate", "met"]
+
+
+def test_config_entry_domains_missing_file_returns_empty(tmp_path: Path):
+    assert prefetch.config_entry_domains(tmp_path) == []
+
+
+def test_config_entry_domains_malformed_returns_empty_and_warns(tmp_path: Path, capsys):
+    storage_dir = tmp_path / ".storage"
+    storage_dir.mkdir(parents=True)
+    (storage_dir / "core.config_entries").write_text(
+        "not json at all", encoding="utf-8"
+    )
+
+    domains = prefetch.config_entry_domains(tmp_path)
+
+    assert domains == []
+    err = capsys.readouterr().err
+    assert len(err.strip().splitlines()) == 1
+
+
+def test_config_entry_domains_missing_data_entries_returns_empty_and_warns(
+    tmp_path: Path, capsys
+):
+    storage_dir = tmp_path / ".storage"
+    storage_dir.mkdir(parents=True)
+    (storage_dir / "core.config_entries").write_text(
+        json.dumps({"version": 1, "key": "core.config_entries"}), encoding="utf-8"
+    )
+
+    domains = prefetch.config_entry_domains(tmp_path)
+
+    assert domains == []
+    err = capsys.readouterr().err
+    assert len(err.strip().splitlines()) == 1
+
+
+@pytest.mark.parametrize(
+    "content_bytes",
+    [
+        pytest.param(b"\xff\xfe\x00not-utf8", id="non_utf8_bytes"),
+        pytest.param(
+            json.dumps({"data": {"entries": {"domain": "x"}}}).encode(),
+            id="entries_is_object_not_list",
+        ),
+        pytest.param(
+            json.dumps(["not", "an", "object"]).encode(), id="top_level_not_object"
+        ),
+    ],
+)
+def test_config_entry_domains_unrecoverable_shapes_return_empty_and_warn_once(
+    tmp_path: Path, capsys, content_bytes: bytes
+):
+    """Shapes the function cannot make sense of at all: one warning, `[]`."""
+    storage_dir = tmp_path / ".storage"
+    storage_dir.mkdir(parents=True)
+    (storage_dir / "core.config_entries").write_bytes(content_bytes)
+
+    domains = prefetch.config_entry_domains(tmp_path)
+
+    assert domains == []
+    err = capsys.readouterr().err
+    assert len(err.strip().splitlines()) == 1
+
+
+@pytest.mark.parametrize(
+    ("entries", "expected_domains"),
+    [
+        pytest.param([1, 2], [], id="entries_non_objects"),
+        pytest.param(
+            [
+                {"domain": None, "disabled_by": None},
+                {"domain": "met", "disabled_by": None},
+            ],
+            ["met"],
+            id="null_domain_next_to_string_domain",
+        ),
+        pytest.param([{"domain": 1, "disabled_by": None}], [], id="non_string_domain"),
+    ],
+)
+def test_config_entry_domains_skips_malformed_entries_without_warning(
+    tmp_path: Path, capsys, entries: list, expected_domains: list[str]
+):
+    """A recognizable `entries` list with some bad entries: skip those entries
+    silently and still return the domains of the well-formed ones, without
+    breaking setup and without a spurious warning for a partly-usable file."""
+    storage_dir = tmp_path / ".storage"
+    storage_dir.mkdir(parents=True)
+    (storage_dir / "core.config_entries").write_text(
+        json.dumps({"data": {"entries": entries}}), encoding="utf-8"
+    )
+
+    domains = prefetch.config_entry_domains(tmp_path)
+
+    assert domains == expected_domains
+    assert capsys.readouterr().err == ""
+
+
+def test_collect_requirements_includes_config_entry_domain_deps(
+    components_dir: Path,
+):
+    _write_manifest(
+        components_dir,
+        "default_config",
+        {"domain": "default_config", "requirements": []},
+    )
+    _write_manifest(
+        components_dir, "frontend", {"domain": "frontend", "requirements": []}
+    )
+    _write_manifest(
+        components_dir,
+        "google_translate",
+        {"domain": "google_translate", "requirements": ["gTTS==2.5.4"]},
+    )
+    _write_manifest(
+        components_dir,
+        "met",
+        {"domain": "met", "dependencies": ["met_backend"], "requirements": []},
+    )
+    _write_manifest(
+        components_dir,
+        "met_backend",
+        {"domain": "met_backend", "requirements": ["pymetno==1.0.0"]},
+    )
+
+    root_domains = (
+        *prefetch.ROOT_DOMAINS,
+        "google_translate",
+        "met",
+    )
+    all_requirements, critical = prefetch.collect_requirements(
+        components_dir, root_domains=root_domains
+    )
+
+    assert "gTTS==2.5.4" in all_requirements
+    assert "pymetno==1.0.0" in all_requirements
+    assert "gTTS==2.5.4" not in critical
+    assert "pymetno==1.0.0" not in critical
+
+
+def test_prefetch_flow_returns_summarize_exit_code(components_dir: Path, monkeypatch):
+    _write_manifest(
+        components_dir,
+        "default_config",
+        {"domain": "default_config", "requirements": []},
+    )
+    _write_manifest(
+        components_dir,
+        "frontend",
+        {"domain": "frontend", "requirements": ["home-assistant-frontend==1.0.0"]},
+    )
+
+    calls = []
+
+    class FakeResult:
+        def __init__(self, returncode):
+            self.returncode = returncode
+
+    def fake_run(cmd, check):
+        calls.append(cmd)
+        req = cmd[cmd.index("--quiet") + 1]
+        return FakeResult(1 if req.startswith("home-assistant-frontend") else 0)
+
+    monkeypatch.setattr(prefetch.subprocess, "run", fake_run)
+    monkeypatch.setattr(
+        prefetch,
+        "missing_requirements",
+        lambda reqs: list(reqs),
+    )
+
+    exit_code = prefetch.run_prefetch(
+        components_dir,
+        constraints=Path("/tmp/constraints.txt"),
+        root_domains=("default_config", "frontend"),
+    )
+
+    assert exit_code == 1
+    assert calls
+
+    # Non-critical failure only: exit code stays 0.
+    calls.clear()
+    _write_manifest(
+        components_dir,
+        "frontend",
+        {"domain": "frontend", "requirements": []},
+    )
+    _write_manifest(
+        components_dir,
+        "default_config",
+        {
+            "domain": "default_config",
+            "dependencies": ["optional_thing"],
+            "requirements": [],
+        },
+    )
+    _write_manifest(
+        components_dir,
+        "optional_thing",
+        {"domain": "optional_thing", "requirements": ["optional-pkg==2.0.0"]},
+    )
+
+    def fake_run_non_critical(cmd, check):
+        calls.append(cmd)
+        return FakeResult(1)
+
+    monkeypatch.setattr(prefetch.subprocess, "run", fake_run_non_critical)
+
+    exit_code = prefetch.run_prefetch(
+        components_dir,
+        constraints=Path("/tmp/constraints.txt"),
+        root_domains=("default_config", "frontend"),
+    )
+
+    assert exit_code == 0
+    assert calls
+
+    # Nothing missing: no subprocess.run call at all.
+    calls.clear()
+    monkeypatch.setattr(prefetch, "missing_requirements", lambda reqs: [])
+
+    exit_code = prefetch.run_prefetch(
+        components_dir,
+        constraints=Path("/tmp/constraints.txt"),
+        root_domains=("default_config", "frontend"),
+    )
+
+    assert exit_code == 0
+    assert calls == []
+
+
+def test_develop_runs_prefetch_before_hass():
+    content = DEVELOP_SCRIPT.read_text(encoding="utf-8")
+    lines = content.splitlines()
+
+    prefetch_lines = [
+        line
+        for line in lines
+        if "prefetch_ha_requirements.py" in line and not line.strip().startswith("#")
+    ]
+    assert prefetch_lines, "no non-comment line invoking prefetch_ha_requirements.py"
+    assert any("--config-dir" in line for line in prefetch_lines)
+
+    prefetch_index = next(
+        i
+        for i, line in enumerate(lines)
+        if "prefetch_ha_requirements.py" in line and not line.strip().startswith("#")
+    )
+    exec_index = next(
+        i for i, line in enumerate(lines) if line.strip().startswith("exec uv run")
+    )
+    assert prefetch_index < exec_index
+
+
+def test_setup_passes_config_dir_to_prefetch():
+    content = SETUP_SCRIPT.read_text(encoding="utf-8")
+    prefetch_lines = [
+        line
+        for line in content.splitlines()
+        if "prefetch_ha_requirements.py" in line and not line.strip().startswith("#")
+    ]
+    assert prefetch_lines
+    assert any("--config-dir" in line for line in prefetch_lines)
