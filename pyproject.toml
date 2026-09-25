@@ -26,6 +26,16 @@ dev = [
 ha = [
     "pytest-homeassistant-custom-component==0.13.232 ; python_version < '3.14'",
     "pytest-homeassistant-custom-component>=0.13.366 ; python_full_version >= '3.14.2'",
+    # HA 2025.4.0 (the min-HA leg, resolved on the python_version < '3.14' fork) pins
+    # aiodns==3.2.0, whose Channel.getaddrinfo() signature aiohttp's resolver calls
+    # positionally. aiodns 3.2.0 only requires pycares>=4.0.0 (no upper bound), and
+    # pycares 5.0.1 changed that signature, so aiohttp's AsyncResolver crashes with
+    # "TypeError: Channel.getaddrinfo() takes 3 positional arguments" as soon as
+    # something resolves a hostname (observed via go2rtc's version check in the
+    # devcontainer; see tasks/008-dev-ha-fixes.md Required 1). Pin pycares to the
+    # last major compatible with aiodns 3.2.0 on this fork only; the latest-HA fork
+    # (python_full_version >= '3.14.2') uses aiodns 4.0.4, which supports pycares 5.
+    "pycares<5 ; python_version < '3.14'",
 ]
 
 [tool.pytest.ini_options]
