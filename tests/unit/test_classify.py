@@ -1,7 +1,7 @@
 """Unit tests for engine.classify (tasks/005-time-and-zones.md)."""
 
 from collections import Counter
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -15,6 +15,7 @@ from engine.timeutil import local_day_start
 
 MSK = ZoneInfo("Europe/Moscow")
 BER = ZoneInfo("Europe/Berlin")
+KOLKATA = ZoneInfo("Asia/Kolkata")  # UTC+05:30, non-whole-hour offset (SPEC §5)
 
 
 def _zone_key(info: HourInfo) -> str:
@@ -203,6 +204,56 @@ def test_dst_zone_counts_berlin():
     zone_counts = Counter(_zone_key(info) for info in infos)
     assert zone_counts["t1"] == 16
     assert zone_counts["t2"] == 8
+
+
+def test_half_hour_offset_zone_kolkata():
+    """SPEC §5 known limitation: non-whole-hour UTC offsets shift local boundaries.
+
+    A whole local day in `Asia/Kolkata` (UTC+05:30) has 24 UTC hours, starting at
+    local `00:30` (not `00:00`, since `local_day_start` always returns a UTC hour
+    boundary), and the day/night zone split still lands on 16/8 because the zone
+    boundaries (07:00/23:00) shift by the same remainder as the day start.
+    """
+    schedule = _two_zone_schedule()
+    start = local_day_start(date(2026, 1, 15), KOLKATA)
+    end = local_day_start(date(2026, 1, 16), KOLKATA)
+    infos = classify_hours(schedule, start, end, KOLKATA)
+    assert len(infos) == 24
+
+    first_info = min(infos, key=lambda info: info.utc_start)
+    assert first_info.local_start.hour == 0
+    assert first_info.local_start.minute == 30
+    assert first_info.local_start.date() == date(2026, 1, 15)
+
+    zone_counts = Counter(_zone_key(info) for info in infos)
+    assert zone_counts["t1"] == 16
+    assert zone_counts["t2"] == 8
+
+
+def test_dst_fall_back_repeated_hour_berlin():
+    """The classifier's fold/offset contract for the repeated local hour.
+
+    On the Berlin fall-back day, local `02:00` occurs twice: once at `+02:00`
+    (before the switch) and once at `+01:00` (after). `HourInfo.local_start` must
+    keep that distinction (via `fold`), and every hour's `local_start` must
+    convert back to exactly its `utc_start` (checked via `astimezone`, since
+    inter-zone equality of fold-ambiguous datetimes is always `False` under
+    PEP 495).
+    """
+    schedule = _two_zone_schedule(date(2025, 1, 1))
+    start = local_day_start(date(2026, 10, 25), BER)
+    end = local_day_start(date(2026, 10, 26), BER)
+    infos = classify_hours(schedule, start, end, BER)
+
+    for info in infos:
+        assert info.local_start.astimezone(UTC) == info.utc_start
+
+    two_am = [info for info in infos if info.local_start.hour == 2]
+    assert len(two_am) == 2
+    two_am.sort(key=lambda info: info.utc_start)
+    first, second = two_am
+    assert first.local_start.utcoffset() == timedelta(hours=2)
+    assert second.local_start.utcoffset() == timedelta(hours=1)
 
 
 def test_before_first_plan_is_unclassified():

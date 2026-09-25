@@ -98,6 +98,10 @@ def test_local_day_start_property(tz):
     one_day = timedelta(days=1)
     for _ in range(365):
         start = local_day_start(day, tz)
+        # The result must be on a whole UTC hour boundary (round tzinfo=UTC, no
+        # sub-hour remainder), not just have the right local date.
+        assert to_utc_hour(start) == start
+        assert start.tzinfo is UTC
         assert start.astimezone(tz).date() == day
         before = start - timedelta(hours=1)
         assert before.astimezone(tz).date() != day

@@ -85,6 +85,22 @@ def test_report_request_validation():
     assert request.end == datetime(2026, 1, 15, 3, 0, tzinfo=UTC)
 
 
+def test_report_request_grouping_accepts_enum_or_value_string():
+    from_enum = ReportRequest(
+        start=_h(0), end=_h(3), time_zone=UTC, grouping=Grouping.WEEK
+    )
+    assert from_enum.grouping is Grouping.WEEK
+
+    from_string = ReportRequest(start=_h(0), end=_h(3), time_zone=UTC, grouping="week")
+    assert from_string.grouping is Grouping.WEEK
+    assert isinstance(from_string.grouping, Grouping)
+
+
+def test_report_request_grouping_rejects_unknown_value():
+    with pytest.raises(ValueError, match="unknown grouping"):
+        ReportRequest(start=_h(0), end=_h(3), time_zone=UTC, grouping="fortnight")
+
+
 # --- DeviceSeries -------------------------------------------------------------
 
 
