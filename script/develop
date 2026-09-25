@@ -35,6 +35,17 @@ if [ "$CONFIG_DIR" != "config" ]; then
     ln -sf "$(pwd)/config/configuration.yaml" "$CONFIG_DIR/configuration.yaml"
 fi
 
+# Re-run the pre-install helper right before starting hass, every time, not
+# only in script/setup. It is idempotent (prints "already installed" and
+# touches no network when nothing is missing), and this is the only moment
+# the venv state matters for dev HA -- HA is not running yet, so nothing
+# races. This covers anything a `uv run` reverted since the last start (e.g.
+# bleak-retry-connector, habluetooth -- see script/setup), a `script/setup`
+# exact sync, a container rebuild, or a config entry (e.g. google_translate)
+# created by a previous run that hasn't been pre-installed yet (see
+# tasks/008-dev-ha-fixes.md). --no-sync: same reason as the final exec below.
+uv run --no-sync --group ha python script/prefetch_ha_requirements.py --config-dir "$CONFIG_DIR"
+
 # exec (not a plain call): replace this shell process with uv/hass instead of
 # forking a child, so a signal sent to this script's pid reaches the hass
 # process directly through uv's signal forwarding (script/smoke-develop relies
@@ -42,12 +53,13 @@ fi
 #
 # --no-sync: script/setup already ran `uv sync --group ha` followed by
 # script/prefetch_ha_requirements.py to pre-install every runtime requirement
-# default_config: needs. A syncing `uv run` here would revert any of those
-# requirements that are *also* transitive dependencies of the `ha` group
-# itself (pinned there to a different version than Home Assistant's manifests
-# want, e.g. bleak-retry-connector, habluetooth) back to the group's version,
-# which then makes Home Assistant re-install them live at startup -- exactly
-# what script/setup's pre-install step exists to avoid. Run `script/setup`
-# again after changing pyproject.toml/uv.lock so the venv matches the lock
-# before this skips the sync.
+# default_config: needs, and the step right above repeated that. A syncing
+# `uv run` here would revert any of those requirements that are *also*
+# transitive dependencies of the `ha` group itself (pinned there to a
+# different version than Home Assistant's manifests want, e.g.
+# bleak-retry-connector, habluetooth) back to the group's version, which then
+# makes Home Assistant re-install them live at startup -- exactly what the
+# pre-install step exists to avoid. Run `script/setup` again after changing
+# pyproject.toml/uv.lock so the venv matches the lock before this skips the
+# sync.
 exec uv run --no-sync --group ha hass --config "$CONFIG_DIR" --debug
