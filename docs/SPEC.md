@@ -67,6 +67,11 @@ kWh per zone, price per zone, cost per zone, totals. Groupings: hour/day/week/mo
 - Engine input is hourly deltas keyed by **UTC hour start**; zones, plan switches and groupings use local
   time (IANA tz via `zoneinfo`); DST days have 23/25 hours and are handled; weeks start on Monday; months
   are local calendar months; groupings: hour/day/week/month/custom range (+ totals).
+- Known limitation: **non-whole-hour UTC offsets** (e.g. `Asia/Kolkata`, UTC+05:30) are accepted, not
+  rejected. Each UTC hour is attributed to the local hour and date its start falls in, so for such zones
+  the local day and every zone/plan boundary effectively shift by the offset's minute remainder (e.g. a
+  local day starting at `xx:30` instead of `xx:00`, and a zone boundary configured for local `07:00` is
+  applied from the UTC hour whose local start is `07:30`). No error is raised; this is by design, not a bug.
 - Current hour isn't compiled into LTS yet → use short-term (5-min) statistics for "today" (kept ~10 days).
 - Data quality (implemented in task 007): an offline gap followed by a catch-up delta is spread evenly over
   the gap hours plus the catch-up hour, each hour priced in its own zone, flagged "estimated". Negative
