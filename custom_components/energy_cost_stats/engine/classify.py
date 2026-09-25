@@ -40,6 +40,11 @@ def classify_hours(
     ``plan.zone_for_hour(local_start.hour)``. This single rule handles plan switches
     at local midnight, zones crossing midnight, and DST (see the task file's design
     notes); the engine never constructs a local midnight as a bound.
+
+    Known limitation (SPEC §5): for time zones with a non-whole-hour UTC offset
+    (e.g. ``Asia/Kolkata``, UTC+05:30), every UTC hour's local start falls on
+    ``xx:30`` rather than ``xx:00``, so the local date and every zone/plan
+    boundary shift by that remainder. This is accepted, not rejected.
     """
     utc_start = to_utc_hour(start)
     utc_end = to_utc_hour(end)

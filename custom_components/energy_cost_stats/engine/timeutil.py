@@ -50,8 +50,8 @@ def local_day_start(day: date, tz: tzinfo) -> datetime:
     # Round down to a UTC hour boundary to search candidates on the hour grid.
     guess = guess.replace(minute=0, second=0, microsecond=0)
 
-    # Search backward and forward a handful of hours (DST shifts are at most a
-    # few hours) for the earliest UTC hour whose local date is `day`.
+    # Search backward and forward a handful of hours (any real UTC offset range)
+    # for the earliest UTC hour whose local date is `day`.
     candidates = [guess + timedelta(hours=offset) for offset in range(-26, 27)]
     matching = [
         candidate for candidate in candidates if candidate.astimezone(tz).date() == day

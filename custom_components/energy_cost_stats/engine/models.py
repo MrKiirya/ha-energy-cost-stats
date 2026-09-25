@@ -40,7 +40,9 @@ class ReportRequest:
     start: datetime
     end: datetime
     time_zone: tzinfo
-    grouping: Grouping
+    grouping: Grouping | str
+    """A `Grouping` member or its plain string value (e.g. the stage 3 websocket
+    layer passes JSON strings); normalized to `Grouping` in `__post_init__`."""
 
     def __post_init__(self) -> None:
         start = to_utc_hour(self.start)
@@ -49,6 +51,17 @@ class ReportRequest:
             raise ValueError(f"end ({end}) must be after start ({start})")
         object.__setattr__(self, "start", start)
         object.__setattr__(self, "end", end)
+        # Accept the enum or its plain string value (stage 3 passes JSON strings
+        # over the websocket API): normalize so `bucket_key`'s `is` comparisons
+        # and the "unknown grouping" branch stay correct at runtime.
+        try:
+            grouping = Grouping(self.grouping)
+        except ValueError as err:
+            raise ValueError(
+                f"unknown grouping: {self.grouping!r}; "
+                f"expected one of {[member.value for member in Grouping]}"
+            ) from err
+        object.__setattr__(self, "grouping", grouping)
 
 
 @dataclass(frozen=True, slots=True)
