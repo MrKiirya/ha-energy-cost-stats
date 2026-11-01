@@ -28,4 +28,9 @@ uv sync --group ha "$@"
 # "$@" forwarded again: e.g. `--python 3.13` (the min-HA matrix leg) must
 # match the interpreter the sync above used, or `--no-sync` falls back to the
 # existing venv with only a warning instead of the requested interpreter.
-uv run --no-sync --group ha "$@" python script/prefetch_ha_requirements.py
+#
+# --config-dir: also pre-installs requirements of any config entry already
+# present in this config dir (e.g. google_translate's gTTS, created by
+# onboarding; see tasks/008-dev-ha-fixes.md). A no-op on a config dir that
+# doesn't exist yet or has no config entries.
+uv run --no-sync --group ha "$@" python script/prefetch_ha_requirements.py --config-dir "${HA_CONFIG_DIR:-config}"

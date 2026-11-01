@@ -20,6 +20,16 @@ This module is deliberately stdlib-only and split into pure functions (no
 `homeassistant` import at module level) so the manifest-walking logic is
 unit-testable without Home Assistant installed; only `main()` needs the `ha`
 dependency group, and is exercised by `script/setup` itself, not by pytest.
+
+`--config-dir` also walks the domains of every enabled config entry found in
+`<config-dir>/.storage/core.config_entries` (e.g. `google_translate`, created
+by onboarding's core-config step), so their requirements (e.g. `gTTS`, not in
+`uv.lock`) are pre-installed too and don't trigger a live install the first
+time Home Assistant sets up those entries (see tasks/008-dev-ha-fixes.md).
+`script/develop` also re-runs this script (with `--no-sync`) right before it
+starts `hass`, so this pre-install repeats on every start -- covering config
+entries created since the last run, and packages a `uv run` elsewhere
+reverted in between (see tasks/008-dev-ha-fixes.md decision, item 3).
 """
 
 from __future__ import annotations
@@ -56,6 +66,49 @@ def _manifest_deps(manifest: dict) -> tuple[str, ...]:
     requirements manager installs requirements for after_dependencies too
     (checked against homeassistant/requirements.py at implementation time)."""
     return (*manifest.get("dependencies", []), *manifest.get("after_dependencies", []))
+
+
+def config_entry_domains(config_dir: Path) -> list[str]:
+    """Return the sorted, unique `domain` values of every enabled config entry
+    (`disabled_by` is null) found in `<config_dir>/.storage/core.config_entries`.
+
+    Returns `[]` when the file does not exist (nothing has been onboarded yet
+    in this config dir). This is a best-effort helper, so a storage format we
+    don't recognize must never break `script/setup` or `script/develop`:
+    - If the file cannot be read as text (e.g. non-UTF-8 bytes), is not valid
+      JSON, or `data.entries` is missing or not a list, the whole file is
+      unusable: print one warning to stderr and return `[]`.
+    - If `entries` is a list but contains individual malformed items (not an
+      object, or a `domain` that is not a string), those items are skipped
+      silently -- the well-formed entries elsewhere in the same file are still
+      used, and no warning is printed for a partly-usable file.
+    """
+    storage_path = config_dir / ".storage" / "core.config_entries"
+    if not storage_path.is_file():
+        return []
+
+    try:
+        payload = json.loads(storage_path.read_text(encoding="utf-8"))
+        entries = payload["data"]["entries"]
+        if not isinstance(entries, list):
+            raise TypeError(
+                f"'data.entries' must be a list, got {type(entries).__name__}"
+            )
+        domains = {
+            entry["domain"]
+            for entry in entries
+            if isinstance(entry, dict)
+            and isinstance(entry.get("domain"), str)
+            and entry.get("disabled_by") is None
+        }
+        return sorted(domains)
+    except (ValueError, KeyError, TypeError, AttributeError, OSError) as exc:
+        print(
+            f"energy_cost_stats: could not read config entry domains from "
+            f"{storage_path}: {exc!r}; ignoring.",
+            file=sys.stderr,
+        )
+        return []
 
 
 def collect_requirements(
@@ -208,12 +261,62 @@ def _own_manifest(repo_root: Path) -> dict:
     return json.loads(manifest_path.read_text(encoding="utf-8"))
 
 
+def run_prefetch(
+    components_dir: Path,
+    constraints: Path,
+    root_domains: Iterable[str],
+    extra_manifests: Iterable[dict] | None = None,
+    critical_domains: Iterable[str] = CRITICAL_DOMAINS,
+    dry_run: bool = False,
+) -> int:
+    """The post-manifest-import flow shared by `main()`: collect
+    requirements, install what's missing, and return the process exit code.
+    Split out from `main()` so it's unit-testable with fake manifests and a
+    monkeypatched `subprocess.run`, without importing `homeassistant`
+    (review round-4 suggestion 1)."""
+    all_requirements, critical_requirements = collect_requirements(
+        components_dir,
+        root_domains=root_domains,
+        extra_manifests=extra_manifests,
+        critical_domains=critical_domains,
+    )
+    to_install = missing_requirements(all_requirements)
+
+    if not to_install:
+        print(
+            "energy_cost_stats: all Home Assistant runtime requirements already "
+            "installed."
+        )
+        return 0
+
+    print(
+        f"energy_cost_stats: pre-installing {len(to_install)} Home Assistant "
+        f"runtime requirement(s) so script/develop won't install them at "
+        f"startup: {', '.join(to_install)}"
+    )
+    if dry_run:
+        return 0
+
+    failures = install_requirements(to_install, constraints)
+    return summarize_failures(failures, critical_requirements)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--dry-run",
         action="store_true",
         help="print what would be installed and exit without installing anything",
+    )
+    parser.add_argument(
+        "--config-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Home Assistant config directory to read config entries from "
+            "(<config-dir>/.storage/core.config_entries). Optional: without "
+            "it, no config entry domains are added to the walk."
+        ),
     )
     args = parser.parse_args(argv)
 
@@ -236,30 +339,19 @@ def main(argv: list[str] | None = None) -> int:
     # step's default_config walk did not include them.
     root_domains = (*ROOT_DOMAINS, *BASE_PLATFORMS)
 
-    all_requirements, critical_requirements = collect_requirements(
+    if args.config_dir is not None:
+        # Best-effort: requirements reached only through a config entry (e.g.
+        # google_translate's gTTS) are not in the critical set, see
+        # run_prefetch()/collect_requirements()'s critical_domains.
+        root_domains = (*root_domains, *config_entry_domains(args.config_dir))
+
+    return run_prefetch(
         components_dir,
+        constraints,
         root_domains=root_domains,
         extra_manifests=[_own_manifest(repo_root)],
+        dry_run=args.dry_run,
     )
-    to_install = missing_requirements(all_requirements)
-
-    if not to_install:
-        print(
-            "energy_cost_stats: all Home Assistant runtime requirements already "
-            "installed."
-        )
-        return 0
-
-    print(
-        f"energy_cost_stats: pre-installing {len(to_install)} Home Assistant "
-        f"runtime requirement(s) so script/develop won't install them at "
-        f"startup: {', '.join(to_install)}"
-    )
-    if args.dry_run:
-        return 0
-
-    failures = install_requirements(to_install, constraints)
-    return summarize_failures(failures, critical_requirements)
 
 
 if __name__ == "__main__":

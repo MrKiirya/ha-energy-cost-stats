@@ -13,6 +13,7 @@ DOCKERFILE = DEVCONTAINER_DIR / "Dockerfile"
 CONFIGURATION_YAML = REPO_ROOT / "config" / "configuration.yaml"
 LAUNCH_JSON = REPO_ROOT / ".vscode" / "launch.json"
 PYTHON_VERSION_FILE = REPO_ROOT / ".python-version"
+SMOKE_DEVELOP_SCRIPT = REPO_ROOT / "script" / "smoke-develop"
 
 
 def _load_devcontainer_json() -> dict:
@@ -178,3 +179,38 @@ def test_launch_json():
     assert config_value == "${env:HA_CONFIG_DIR}"
 
     assert ha_config["env"]["PYTHONPATH"] == "${workspaceFolder}"
+
+
+def test_dockerfile_pins_go2rtc():
+    content = DOCKERFILE.read_text(encoding="utf-8")
+
+    pattern = re.compile(
+        r"^COPY --from=ghcr\.io/alexxit/go2rtc:(\d+\.\d+\.\d+)@sha256:[0-9a-f]{64} "
+        r"/usr/local/bin/go2rtc /bin/go2rtc$",
+        re.MULTILINE,
+    )
+    matches = pattern.findall(content)
+    assert len(matches) == 1, (
+        f"expected exactly one pinned go2rtc COPY line, found {len(matches)}"
+    )
+
+    assert not re.search(
+        r"^COPY --from=ghcr\.io/alexxit/go2rtc:latest", content, re.MULTILINE
+    ), "go2rtc must be pinned to an exact version, not 'latest'"
+
+
+def _non_comment_lines(script_path: Path) -> list[str]:
+    return [
+        line
+        for line in script_path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+
+def test_smoke_develop_fails_on_default_config_dependencies():
+    lines = _non_comment_lines(SMOKE_DEVELOP_SCRIPT)
+    content = "\n".join(lines)
+
+    assert "Unable to set up dependencies of 'default_config'" in content
+    assert re.search(r"Setup failed for .*default_config", content)
+    assert "Attempting install of" in content
