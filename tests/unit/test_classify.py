@@ -323,3 +323,16 @@ def test_classify_rejects_bad_window():
             datetime(2026, 1, 15, 3, 0, tzinfo=UTC),
             MSK,
         )
+
+
+def test_classify_without_schedule():
+    start, end = (
+        local_day_start(date(2026, 1, 15), MSK),
+        local_day_start(date(2026, 1, 16), MSK),
+    )
+    bare = classify_hours(None, start, end, MSK)
+    with_plan = classify_hours(_two_zone_schedule(), start, end, MSK)
+    assert len(bare) == 24
+    assert all(info.plan is None and info.zone is None for info in bare)
+    assert [i.local_start for i in bare] == [i.local_start for i in with_plan]
+    assert [i.utc_start for i in bare] == [i.utc_start for i in with_plan]
