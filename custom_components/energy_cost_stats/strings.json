@@ -145,6 +145,53 @@
         "ru_two_zone": "Two zones: day and night",
         "ru_three_zone": "Three zones: peak, semi-peak and night"
       }
+    },
+    "grouping": {
+      "options": {
+        "hour": "Hour",
+        "day": "Day",
+        "week": "Week",
+        "month": "Month",
+        "total": "Total"
+      }
+    }
+  },
+  "services": {
+    "get_report": {
+      "name": "Get report",
+      "description": "Returns the electricity cost report for a period, per device and tariff zone, as response data. All decimal numbers (energy, cost, prices) are returned as strings; use the float filter in templates, for example `value | float`. The end of the period is exclusive.",
+      "fields": {
+        "start": {
+          "name": "Start",
+          "description": "First day (YYYY-MM-DD, local midnight in the integration time zone) or an ISO datetime on a whole UTC hour. A datetime without an offset is read in the integration time zone."
+        },
+        "end": {
+          "name": "End",
+          "description": "End of the period, exclusive, in the same formats as the start. For example 2026-02-01 ends after January."
+        },
+        "grouping": {
+          "name": "Grouping",
+          "description": "How hours are grouped into rows. Hourly reports are limited to 31 days."
+        },
+        "entities": {
+          "name": "Energy sensors",
+          "description": "Configured energy sensors to include, in the order given. Leave empty for all configured sensors."
+        }
+      }
+    }
+  },
+  "exceptions": {
+    "not_loaded": {
+      "message": "Energy Cost Stats is not set up."
+    },
+    "invalid_period": {
+      "message": "Invalid period: {detail}"
+    },
+    "period_too_long": {
+      "message": "The period is too long (at most {max})."
+    },
+    "unknown_entity": {
+      "message": "{entity_id} is not one of the configured energy sensors."
     }
   }
 }
