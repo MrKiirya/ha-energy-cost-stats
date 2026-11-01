@@ -93,11 +93,43 @@ Semantics (engine, `build_report`; details in tasks/006-pricing-and-grouping.md)
   local day starting at `xx:30` instead of `xx:00`, and a zone boundary configured for local `07:00` is
   applied from the UTC hour whose local start is `07:30`). No error is raised; this is by design, not a bug.
 - Current hour isn't compiled into LTS yet → use short-term (5-min) statistics for "today" (kept ~10 days).
-- Data quality (implemented in task 007): an offline gap followed by a catch-up delta is spread evenly over
-  the gap hours plus the catch-up hour, each hour priced in its own zone, flagged "estimated". Negative
-  deltas and deltas above a per-device limit (default 4 kWh/h ≈ a 16 A socket at 3.7 kW; global setting;
-  per-device override or disable) are excluded and reported (count, kWh, when), flagged "excluded".
-  Missing data is always explicit (missing/partial), never a silent zero.
+- Data quality (implemented in task 007, `engine/quality.py`). Missing data is always explicit
+  (missing/partial), never a silent zero. Rules, all keyed on UTC hours:
+  - A gap is an **absence of keys** in the series, never a run of zeros; a `0` delta is a measured 0.
+  - Every key `k` with delta `D` defines a **span**: the UTC hours `(p, k]`, where `p` is the previous key
+    in sorted order (inside or outside the window), so `n = (k - p) / 1 h`. `n == 1` is a contiguous hour;
+    `n > 1` is a gap of `n - 1` hours plus the catch-up hour `k`. Gap length is not capped.
+  - The **earliest key** has no known predecessor: its span is just its own hour, it is measured as-is and
+    spike-checked, and all earlier hours stay missing. Trailing gaps with no catch-up also stay missing.
+  - `D < 0` is excluded (`EXCLUDED_NEGATIVE`; this check cannot be disabled and wins over the spike
+    check). Otherwise `D > limit * n` is excluded (`EXCLUDED_SPIKE`): the limit (default 4 kWh/h ≈ a 16 A
+    socket at 3.7 kW; global setting, per-device override or disable, `None` = off) is compared with the
+    per-hour average after spreading, strictly. For a rejected delta only the catch-up hour is EXCLUDED;
+    the gap hours stay missing.
+  - An accepted delta with `n > 1` (including `D == 0`) is spread: `q = D / n` rounded down to `1E-20`
+    for each gap hour, the remainder `D - (n - 1) q` goes to the catch-up hour; all `n` hours are flagged
+    "estimated" and priced in their own zones. Sums stay exact.
+  - Each ESTIMATED / EXCLUDED_* `QualityIssue` is clipped to the report window (start, end and kWh cover
+    only in-window hours), so issues sum to the row totals. One ESTIMATED issue per spread span, one
+    EXCLUDED issue per rejected in-window delta (consecutive ones are not merged).
+  - The value of any hour depends only on the series, never on the window (**window independence**).
+- HA recorder facts behind this (checked on core `dev` and 2025.4.0; sources:
+  [sensor/recorder.py](https://github.com/home-assistant/core/blob/dev/homeassistant/components/sensor/recorder.py),
+  [recorder/statistics.py](https://github.com/home-assistant/core/blob/dev/homeassistant/components/recorder/statistics.py)):
+  - An unavailable `total_increasing` sensor writes **no** statistics row (not even `change 0`); hours
+    without valid states have no hourly row.
+  - The first row after an outage is relative to the **last stored row** (`sum` is seeded from it), so it
+    carries the whole outage's consumption: that is the catch-up delta.
+  - A drop to below `0.9 *` the previous state is a reset (sum continues from 0); a smaller drop appears as
+    a negative change.
+  - `change` is `sum - previous row's sum`; a row with a `NULL` sum has `change = None`.
+- Stage 3 adapter requirement: pass, per device, at least the last key before the window and the first
+  key after it (look-back / look-ahead), and drop rows with `change is None` (they become missing).
+  Without the look-back key the engine cannot see a gap that started before the window.
+- Known limitations: a device that restarts with a counter reset during an outage loses the energy used
+  before the restart (HA counts only the new value); a sensor that stays "available" with a stale value
+  yields measured `0` rows and then one large delta, which the engine cannot see as a gap (the spike
+  check may exclude it).
 - Known limitation: plugs that report late across a zone boundary put some kWh into the wrong zone
   (boundary misattribution). The engine cannot detect this from hourly statistics.
 - Meter resets of `total_increasing` sensors are already handled by HA when it compiles the statistics
