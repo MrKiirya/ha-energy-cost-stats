@@ -1,0 +1,32 @@
+get_report:
+  fields:
+    start:
+      required: true
+      example: "2026-01-01"
+      selector:
+        text:
+    end:
+      required: true
+      example: "2026-02-01T00:00:00+03:00"
+      selector:
+        text:
+    grouping:
+      required: true
+      example: "day"
+      selector:
+        select:
+          translation_key: grouping
+          options:
+            - hour
+            - day
+            - week
+            - month
+            - total
+    entities:
+      required: false
+      selector:
+        entity:
+          multiple: true
+          filter:
+            domain: sensor
+            device_class: energy
