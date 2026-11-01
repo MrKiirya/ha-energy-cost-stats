@@ -15,8 +15,9 @@ three-zone residential tariffs.
 ## 2. Architecture
 - `custom_components/energy_cost_stats/engine/` — pure logic: hourly deltas + tariff plans → report table.
   No `homeassistant` imports.
-- `custom_components/energy_cost_stats/recorder_adapter.py` (name TBD) — the **only** module that touches
-  the recorder statistics API (see §6).
+- `custom_components/energy_cost_stats/recorder_adapter.py` — the **only** module that touches
+  the recorder statistics API (see §6). It returns one engine `DeviceSeries` per statistic id (hourly kWh
+  `change`, with neighbour keys, see §5) plus a per-id status (`ok` / `no_statistics` / `unsupported`).
 - Integration layer:
   - config flow (setup) + options flow (select energy entities, multi-select, `device_class: energy`);
   - tariff plans stored as **config subentries** (MVP); may move to `helpers.storage.Store` + card editor later;
@@ -109,7 +110,9 @@ Semantics (engine, `build_report`; details in tasks/006-pricing-and-grouping.md)
   the local day and every zone/plan boundary effectively shift by the offset's minute remainder (e.g. a
   local day starting at `xx:30` instead of `xx:00`, and a zone boundary configured for local `07:00` is
   applied from the UTC hour whose local start is `07:30`). No error is raised; this is by design, not a bug.
-- Current hour isn't compiled into LTS yet → use short-term (5-min) statistics for "today" (kept ~10 days).
+- The current hour isn't compiled into LTS yet. In stage 3 the not-yet-compiled hour (and the last hour until the
+  recorder compiles it, a few seconds after the hour) is **missing**, like any trailing gap, never zero. Using
+  short-term (5-min) statistics for "today" (kept ~10 days) is a follow-up.
 - Data quality (implemented in task 007, `engine/quality.py`). Missing data is always explicit
   (missing/partial), never a silent zero. Rules, all keyed on UTC hours:
   - A gap is an **absence of keys** in the series, never a run of zeros; a `0` delta is a measured 0.
@@ -143,6 +146,15 @@ Semantics (engine, `build_report`; details in tasks/006-pricing-and-grouping.md)
 - Stage 3 adapter requirement: pass, per device, at least the last key before the window and the first
   key after it (look-back / look-ahead), and drop rows with `change is None` (they become missing).
   Without the look-back key the engine cannot see a gap that started before the window.
+  Implemented in task 011 (`recorder_adapter.py`): per id it returns every in-window key plus exactly one key
+  before and one after the window (trimmed, however far away they are). Query plan: one query for
+  `[start - 1 day, end + 1 day)`; ids still lacking a neighbour are re-queried only for themselves in
+  widening ranges (31 days, then unbounded back to 1970 / forward to now). Worst case is O(history) for an id
+  with a hole of more than 31 days next to the window, because the recorder has no public "last row before t"
+  query. HA's `change` is relative to the previous non-null row only inside a query. The baseline of a
+  query is the last row before its start, even with a `NULL` sum (taken as 0), so the first non-null row of
+  a query can carry its full cumulative sum. The adapter therefore requests `sum` too and recomputes that row's
+  `change` as `sum` minus the previous fetched non-null sum.
 - Known limitations: a device that restarts with a counter reset during an outage loses the energy used
   before the restart (HA counts only the new value); a sensor that stays "available" with a stale value
   yields measured `0` rows and then one large delta, which the engine cannot see as a gap (the spike
@@ -171,12 +183,17 @@ of looking green.
 | Feature we rely on | Since | Notes |
 |---|---|---|
 | `statistics_during_period(..., types={"change", ...})` | ≤ 2023.x | Reading side; stable. |
+| `get_metadata(statistic_ids=...)` | ≤ 2023.x | Adapter reads only `has_sum` and `unit_of_measurement`. |
 | Config subentries | 2025.3 | Hard floor: tariff plans are subentries. |
 | `StatisticMeanType` / `mean_type` in metadata | 2025.4 | Writing external statistics (stage 2). |
 | `unit_class` in statistics metadata | 2025.11 | Adapter passes it only when supported. |
 | `has_mean` removed; `mean_type` + `unit_class` mandatory for writes | 2026.11 | Adapter must already comply. |
 
 Reading metadata: ignore unknown fields (`mean_type`, `unit_class`, deprecated `has_mean`).
+The `statistics_during_period` and `get_metadata` parameters were verified identical at 2025.4.0 and `dev` on
+2026-11-01 (`dev` only adds `period="year"`): [statistics.py @2025.4.0](https://github.com/home-assistant/core/blob/2025.4.0/homeassistant/components/recorder/statistics.py),
+[statistics.py @dev](https://github.com/home-assistant/core/blob/dev/homeassistant/components/recorder/statistics.py).
+The adapter calls them with keyword arguments.
 Reference: https://developers.home-assistant.io/blog/2025/10/16/recorder-statistics-api-changes/
 
 ## 7. Prior art (studied, don't reinvent — borrow ideas)
