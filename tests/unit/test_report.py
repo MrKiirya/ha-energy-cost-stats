@@ -562,9 +562,13 @@ def test_totals_are_exact_not_sums_of_rounded_cells():
     bucket = report.buckets[0]
     for row in bucket.rows:
         assert row.cost == D("0.005150")
-    assert bucket.total.cost == D("0.015450")
-    assert round_money(bucket.total.cost) == D("0.02")
-    assert sum(round_money(r.cost) for r in bucket.rows) == D("0.03")
+    total_cost = bucket.total.cost
+    assert total_cost is not None
+    assert total_cost == D("0.015450")
+    assert round_money(total_cost) == D("0.02")
+    row_costs = [r.cost for r in bucket.rows if r.cost is not None]
+    assert len(row_costs) == len(bucket.rows)
+    assert sum(round_money(c) for c in row_costs) == D("0.03")
 
 
 def test_empty_devices():
