@@ -17,7 +17,9 @@ from homeassistant.exceptions import ConfigEntryError
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.util import dt as dt_util
 
-from .const import DOMAIN
+from .const import DOMAIN, SUBENTRY_TYPE_TARIFF_PLAN
+from .engine.plan_codec import plan_from_data
+from .engine.tariff import TariffPlan, TariffSchedule, TariffValidationError
 from .settings import IntegrationSettings, SettingsError, settings_from_options
 
 CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
@@ -25,10 +27,11 @@ CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
 
 @dataclass
 class RuntimeData:
-    """Parsed settings kept for the lifetime of a loaded entry."""
+    """Parsed settings and tariff schedule kept for the lifetime of a loaded entry."""
 
     settings: IntegrationSettings
     tzinfo: tzinfo
+    schedule: TariffSchedule | None
 
 
 type EnergyCostStatsConfigEntry = ConfigEntry[RuntimeData]
@@ -52,7 +55,22 @@ async def async_setup_entry(
     if tz is None:
         raise ConfigEntryError(f"Unknown time zone: {settings.time_zone!r}")
 
-    entry.runtime_data = RuntimeData(settings=settings, tzinfo=tz)
+    plans: list[TariffPlan] = []
+    for subentry in entry.subentries.values():
+        if subentry.subentry_type != SUBENTRY_TYPE_TARIFF_PLAN:
+            continue
+        try:
+            plans.append(plan_from_data(subentry.data))
+        except TariffValidationError as err:
+            raise ConfigEntryError(
+                f"Invalid tariff plan {subentry.title!r}: {err}"
+            ) from err
+    try:
+        schedule = TariffSchedule(tuple(plans)) if plans else None
+    except TariffValidationError as err:
+        raise ConfigEntryError(f"Invalid tariff schedule: {err}") from err
+
+    entry.runtime_data = RuntimeData(settings=settings, tzinfo=tz, schedule=schedule)
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
 

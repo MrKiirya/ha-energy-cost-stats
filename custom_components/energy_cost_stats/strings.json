@@ -55,5 +55,96 @@
     "abort": {
       "invalid_options": "The stored options are invalid. Remove and add the integration again."
     }
+  },
+  "config_subentries": {
+    "tariff_plan": {
+      "entry_type": "Tariff plan",
+      "initiate_flow": {
+        "user": "Add tariff plan",
+        "reconfigure": "Edit tariff plan"
+      },
+      "step": {
+        "user": {
+          "title": "Add tariff plan",
+          "description": "Start from a preset or copy an existing plan.",
+          "menu_options": {
+            "preset": "Start from a preset",
+            "copy": "Copy an existing plan"
+          }
+        },
+        "preset": {
+          "title": "Choose a preset",
+          "description": "The zones of the plan follow the preset. You enter the prices and check the hours in the next step.",
+          "data": {
+            "preset": "Preset"
+          }
+        },
+        "copy": {
+          "title": "Copy a plan",
+          "description": "Names, prices and hours are copied; you set a new start date.",
+          "data": {
+            "source_plan": "Plan to copy"
+          }
+        },
+        "plan": {
+          "title": "Tariff plan",
+          "description": "Every hour of the day must belong to exactly one zone. Enter hours as HH:MM-HH:MM on whole hours. Changing a plan re-prices all past hours it covers.\n\n{detail}",
+          "data": {
+            "valid_from": "Valid from",
+            "name": "Plan name",
+            "t0_name": "Single-rate zone name",
+            "t0_price": "Single-rate price per kWh",
+            "t0_periods": "Single-rate hours",
+            "t1_name": "Day / peak (T1) zone name",
+            "t1_price": "Day / peak (T1) price per kWh",
+            "t1_periods": "Day / peak (T1) hours",
+            "t2_name": "Night (T2) zone name",
+            "t2_price": "Night (T2) price per kWh",
+            "t2_periods": "Night (T2) hours",
+            "t3_name": "Semi-peak (T3) zone name",
+            "t3_price": "Semi-peak (T3) price per kWh",
+            "t3_periods": "Semi-peak (T3) hours"
+          },
+          "data_description": {
+            "valid_from": "The plan applies from local midnight of this date until the next plan starts. Hours before the first plan are reported as unpriced.",
+            "name": "Display name of the plan.",
+            "t0_name": "Display name only; the zone key stays the same.",
+            "t0_price": "Price per kWh, for example 10.30 (a comma works too).",
+            "t0_periods": "Whole hours as HH:MM-HH:MM, separated by commas, for example 07:00-10:00, 17:00-21:00. Use 23:00-07:00 across midnight and 00:00-24:00 for the whole day.",
+            "t1_name": "Display name only; the zone key stays the same.",
+            "t1_price": "Price per kWh, for example 10.30 (a comma works too).",
+            "t1_periods": "Whole hours as HH:MM-HH:MM, separated by commas, for example 07:00-10:00, 17:00-21:00. Use 23:00-07:00 across midnight and 00:00-24:00 for the whole day.",
+            "t2_name": "Display name only; the zone key stays the same.",
+            "t2_price": "Price per kWh, for example 10.30 (a comma works too).",
+            "t2_periods": "Whole hours as HH:MM-HH:MM, separated by commas, for example 07:00-10:00, 17:00-21:00. Use 23:00-07:00 across midnight and 00:00-24:00 for the whole day.",
+            "t3_name": "Display name only; the zone key stays the same.",
+            "t3_price": "Price per kWh, for example 10.30 (a comma works too).",
+            "t3_periods": "Whole hours as HH:MM-HH:MM, separated by commas, for example 07:00-10:00, 17:00-21:00. Use 23:00-07:00 across midnight and 00:00-24:00 for the whole day."
+          }
+        }
+      },
+      "error": {
+        "invalid_price": "Enter a price as a plain number, for example 10.30.",
+        "invalid_periods": "Enter whole hours as HH:MM-HH:MM, separated by commas, for example 07:00-23:00.",
+        "blank_name": "The name must not be empty.",
+        "valid_from_taken": "Another plan already starts on this date.",
+        "invalid_date": "Enter a valid date.",
+        "invalid_plan": "The zones are invalid: {detail}"
+      },
+      "abort": {
+        "reconfigure_successful": "The tariff plan was updated.",
+        "unknown_plan": "The selected plan no longer exists.",
+        "invalid_plan_data": "The stored plan is invalid. Delete it and add it again."
+      }
+    }
+  },
+  "selector": {
+    "preset": {
+      "options": {
+        "single_rate": "Single rate (T0)",
+        "ru_two_zone": "Two zones: day and night",
+        "ru_three_zone": "Three zones: peak, semi-peak and night"
+      }
+    }
   }
 }
