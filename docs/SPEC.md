@@ -29,7 +29,9 @@ three-zone residential tariffs.
   not follow later Home Assistant changes, so retroactive prices never move silently. The config flow asks for
   time zone and spike limit; the options flow edits them, selects the energy sensors and optionally sets
   per-device spike limits (empty = global, `0` = off). Any options or subentry change reloads the entry through a
-  single update listener (not `OptionsFlowWithReload`, which is missing in the minimum HA version).
+  single update listener (not `OptionsFlowWithReload`, which is missing in the minimum HA version). The
+  reloaded entry holds the parsed tariff schedule (`None` when no plan exists), so adding, editing or deleting
+  a plan re-prices all past hours.
 - Card (Lit + TypeScript): renders the table; served by the integration itself (static path + extra JS),
   so users install one HACS repo.
 - Stage 2 (optional): write **4 external statistics** series for the Energy dashboard:
@@ -40,11 +42,18 @@ three-zone residential tariffs.
 Versioned **tariff plans**. `valid_from` is a *local* calendar date; the plan applies from local midnight
 of that date until the next plan's `valid_from`; there is no end date. Any change, even price only, is a
 new plan (UX: "duplicate current plan"). Two plans with the same `valid_from` are invalid.
+Storage: one config subentry of type `tariff_plan` per plan, with `unique_id` = `valid_from` (ISO date; the
+flow reports a duplicate date as a field error) and title `"<valid_from> · <name>"`. The subentry data is the
+JSON below, with **prices as decimal strings** (scale kept, no exponent; money never passes through `float`),
+period end of day written as `"24:00"`, and reading is strict (unknown keys and wrong types are rejected).
+`volume_band_limits_kwh` and `band_prices` are written only when non-empty. The zone set of a plan is fixed
+by its preset or the copied plan (the UI edits zone names, prices, periods, plan name and `valid_from`, but
+does not add, remove or re-key zones).
 ```json
 { "valid_from": "2026-07-01", "name": "Two-zone",
   "zones": [
-    { "key": "t1", "name": "Day",   "price": 0.0, "periods": [["07:00","23:00"]] },
-    { "key": "t2", "name": "Night", "price": 0.0, "periods": [["23:00","07:00"]] } ] }
+    { "key": "t1", "name": "Day",   "price": "10.30", "periods": [["07:00","23:00"]] },
+    { "key": "t2", "name": "Night", "price": "4.43", "periods": [["23:00","07:00"]] } ] }
 ```
 - Periods are half-open whole-hour intervals `[start, end)`; `end < start` crosses midnight (e.g.
   `["23:00","07:00"]` = hours 23, 0, 1, ..., 6); `00:00`/`24:00` as **end** means end of day; the full
