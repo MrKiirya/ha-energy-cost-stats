@@ -4,17 +4,17 @@ Pure Python, stdlib only (CLAUDE.md principle 4). The rules implemented here (ce
 row semantics, zone union, ``None`` vs ``0``, exactness) are specified in
 tasks/006-pricing-and-grouping.md and docs/SPEC.md §4.
 
-Pipeline: classify the window once -> prepare each device (task 007 replaces
-`prepare_measured` with its quality pre-pass) -> `assemble_report`.
+Pipeline: classify the window once -> `quality.prepare_series` per device (gap
+spreading, negative/spike exclusion, issues; tasks/007-data-quality.md) ->
+`assemble_report`. `prepare_measured` is kept as the clean-series baseline and is not
+used by `build_report`.
 """
 
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from datetime import timedelta
 from decimal import Decimal, localcontext
-from enum import StrEnum
 
 from . import classify as _classify
 from .models import (
@@ -29,35 +29,12 @@ from .models import (
     ZoneCell,
     ZoneLabel,
 )
+from .prepared import HourKind, HourValue, PreparedSeries
+from .quality import QualitySettings, prepare_series
 from .tariff import TariffPlan, TariffSchedule
 
 _HOUR = timedelta(hours=1)
 _PRECISION = 50
-
-
-class HourKind(StrEnum):
-    """How an hour's kWh value came about."""
-
-    MEASURED = "measured"
-    ESTIMATED = "estimated"
-    EXCLUDED = "excluded"
-
-
-@dataclass(frozen=True, slots=True)
-class HourValue:
-    """One device-hour's kWh and its kind."""
-
-    kwh: Decimal
-    kind: HourKind
-
-
-@dataclass(frozen=True, slots=True)
-class PreparedSeries:
-    """A device's values aligned to the classified hours: ``values[i]`` is for
-    ``hours[i]``; ``None`` means missing."""
-
-    device_id: str
-    values: tuple[HourValue | None, ...]
 
 
 def prepare_measured(
@@ -323,10 +300,13 @@ def build_report(
     request: ReportRequest,
     schedule: TariffSchedule,
     devices: Sequence[DeviceSeries],
+    *,
+    quality: QualitySettings | None = None,
 ) -> Report:
     """Build the full report for ``request`` from ``schedule`` and ``devices``.
 
     Every hour is re-priced from the schedule on each call (CLAUDE.md principle 3).
+    ``quality`` defaults to `QualitySettings()`.
     """
     seen: set[str] = set()
     for device in devices:
@@ -337,5 +317,13 @@ def build_report(
     hours = _classify.classify_hours(
         schedule, request.start, request.end, request.time_zone
     )
-    prepared = [prepare_measured(device, hours) for device in devices]
-    return assemble_report(request, hours, prepared)
+    settings = quality if quality is not None else QualitySettings()
+    prepared: list[PreparedSeries] = []
+    issues: list[QualityIssue] = []
+    for device in devices:
+        series, device_issues = prepare_series(
+            device, hours, time_zone=request.time_zone, settings=settings
+        )
+        prepared.append(series)
+        issues.extend(device_issues)
+    return assemble_report(request, hours, prepared, issues)
