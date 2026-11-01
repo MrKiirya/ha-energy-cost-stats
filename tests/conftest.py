@@ -14,7 +14,9 @@ _LEVELS = ("unit", "integration", "golden")
 if not _HA_HARNESS_INSTALLED:
     # Integration test modules import `homeassistant.*` at module level, so a per-test
     # skip marker would come too late (collection itself would fail). Ignore the whole
-    # directory.
+    # directory, including its conftest.py (it imports `homeassistant.*` too), which a
+    # glob over the directory's contents does not cover.
+    collect_ignore = ["integration"]
     collect_ignore_glob = ["integration/*"]
 
 
