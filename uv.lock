@@ -1504,6 +1504,7 @@ dev = [
     { name = "ruff" },
     { name = "syrupy", version = "4.8.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14.2'" },
     { name = "syrupy", version = "6.0.0", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14.2'" },
+    { name = "tzdata" },
 ]
 ha = [
     { name = "pytest-homeassistant-custom-component", version = "0.13.232", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14.2'" },
@@ -1521,6 +1522,7 @@ dev = [
     { name = "pyyaml", specifier = ">=6" },
     { name = "ruff", specifier = ">=0.6" },
     { name = "syrupy", specifier = ">=4" },
+    { name = "tzdata" },
 ]
 ha = [
     { name = "pytest-homeassistant-custom-component", marker = "python_full_version < '3.14'", specifier = "==0.13.232" },
