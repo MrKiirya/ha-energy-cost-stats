@@ -22,7 +22,19 @@ three-zone residential tariffs.
   - config flow (setup) + options flow (select energy entities, multi-select, `device_class: energy`);
   - tariff plans stored as **config subentries** (MVP); may move to `helpers.storage.Store` + card editor later;
   - websocket command `energy_cost_stats/report` (period, grouping, entities) → aggregated table;
-  - service `energy_cost_stats.get_report` with `SupportsResponse` (for automations/scripts).
+  - service `energy_cost_stats.get_report` with `SupportsResponse.ONLY` (for automations/scripts).
+  - Both are registered once in `async_setup` and take the same fields: `start` and `end` (required; a local date
+    `YYYY-MM-DD` = local midnight, or an ISO datetime; a datetime without offset is read in the settings time
+    zone and must fall on a whole UTC hour; `end` is **exclusive**), `grouping` (`hour` / `day` / `week` / `month`
+    / `total`) and optional `entities` (omitted or empty = all configured sensors; otherwise a subset of the
+    configured ones, in the order given, duplicates dropped). There is no time-zone field: the time zone comes
+    from the settings. A date bound in a time zone with a non-whole-hour offset is rounded up to the first UTC
+    hour starting on or after local midnight (§5). Hourly reports are limited to 31 days (745 buckets), other
+    groupings to 3660 days.
+  - Both return the same JSON document as §4 (decimals are strings; use `| float` in templates). Errors:
+    `not_loaded` (no loaded entry), `invalid_period`, `period_too_long`, `unknown_entity` (websocket error codes;
+    the service raises a translated `ServiceValidationError` with the same key); malformed fields are rejected by
+    the schema (`invalid_format` / `vol.Invalid`). The websocket command needs no admin rights (read-only).
 - Settings (single instance, `single_config_entry`): all settings live in `entry.options` (`entry.data` is empty):
   `time_zone`, `spike_limit` (decimal string, `null` = check off), `device_spike_limits` (entity id -> decimal
   string; missing = use the global limit, `null` = off for that device) and `entities`. Decimals are strings
