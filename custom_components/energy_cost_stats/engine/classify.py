@@ -31,7 +31,7 @@ class HourInfo:
 
 
 def classify_hours(
-    schedule: TariffSchedule, start: datetime, end: datetime, tz: tzinfo
+    schedule: TariffSchedule | None, start: datetime, end: datetime, tz: tzinfo
 ) -> tuple[HourInfo, ...]:
     """Classify every UTC hour in ``[start, end)`` by local plan and zone.
 
@@ -45,6 +45,9 @@ def classify_hours(
     (e.g. ``Asia/Kolkata``, UTC+05:30), every UTC hour's local start falls on
     ``xx:30`` rather than ``xx:00``, so the local date and every zone/plan
     boundary shift by that remainder. This is accepted, not rejected.
+
+    ``schedule=None`` means no tariff plan exists yet (tasks/012): every hour gets
+    ``plan = zone = None`` (unpriced) and the local starts are unchanged.
     """
     utc_start = to_utc_hour(start)
     utc_end = to_utc_hour(end)
@@ -59,7 +62,7 @@ def classify_hours(
     infos: list[HourInfo] = []
     for hour in iter_hours(utc_start, utc_end):
         local_start = hour.astimezone(tz)
-        plan = schedule.plan_for(local_start.date())
+        plan = None if schedule is None else schedule.plan_for(local_start.date())
         zone: Zone | None = None
         if plan is not None:
             plan_id = id(plan)

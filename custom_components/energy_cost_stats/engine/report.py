@@ -298,7 +298,7 @@ def _assemble(
 
 def build_report(
     request: ReportRequest,
-    schedule: TariffSchedule,
+    schedule: TariffSchedule | None,
     devices: Sequence[DeviceSeries],
     *,
     quality: QualitySettings | None = None,
@@ -306,7 +306,9 @@ def build_report(
     """Build the full report for ``request`` from ``schedule`` and ``devices``.
 
     Every hour is re-priced from the schedule on each call (CLAUDE.md principle 3).
-    ``quality`` defaults to `QualitySettings()`.
+    ``quality`` defaults to `QualitySettings()`. ``schedule=None`` (no tariff plan
+    exists yet) makes every hour unpriced: no zones or plans, ``cost`` is ``None``
+    (tasks/012-report-serializer.md).
     """
     seen: set[str] = set()
     for device in devices:
