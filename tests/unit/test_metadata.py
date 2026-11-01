@@ -54,7 +54,8 @@ def test_manifest_matches_domain():
 
     assert manifest["integration_type"] == "service"
     assert manifest["iot_class"] == "calculated"
-    assert not manifest.get("config_flow", False)
+    assert manifest["config_flow"] is True
+    assert manifest["single_config_entry"] is True
     assert "recorder" in manifest["dependencies"]
     assert re.match(r"^\d+\.\d+\.\d+$", manifest["version"])
 
@@ -72,3 +73,26 @@ def test_single_integration_dir():
         if p.is_dir() and p.name != "__pycache__"
     ]
     assert subdirs == ["energy_cost_stats"]
+
+
+def _collect_values(node):
+    if isinstance(node, dict):
+        for value in node.values():
+            yield from _collect_values(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _collect_values(value)
+    else:
+        yield node
+
+
+def test_strings_match_en_translation():
+    strings = json.loads((INTEGRATION_DIR / "strings.json").read_text(encoding="utf-8"))
+    en = json.loads(
+        (INTEGRATION_DIR / "translations" / "en.json").read_text(encoding="utf-8")
+    )
+    assert strings == en
+    assert "title" not in strings
+    assert "title" not in en
+    for value in _collect_values(strings):
+        assert "[%key:" not in str(value)
