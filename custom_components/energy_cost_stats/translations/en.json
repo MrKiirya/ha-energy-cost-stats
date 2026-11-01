@@ -1,0 +1,59 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Energy Cost Stats",
+        "description": "Choose the time zone used for tariff zones and groupings, and the largest hourly consumption (per device) that is still considered plausible. Energy sensors are selected afterwards in the integration options.",
+        "data": {
+          "time_zone": "Time zone",
+          "spike_check": "Check for consumption spikes",
+          "spike_limit": "Spike limit"
+        },
+        "data_description": {
+          "time_zone": "Used for tariff zones and daily, weekly and monthly groupings. It does not follow later changes of the Home Assistant time zone.",
+          "spike_check": "Flag hours with implausibly high consumption in the data-quality report.",
+          "spike_limit": "Maximum plausible consumption per device and hour. Ignored when the spike check is off."
+        }
+      }
+    },
+    "abort": {
+      "single_instance_allowed": "Energy Cost Stats is already configured. Only one instance is allowed."
+    },
+    "error": {
+      "invalid_limit": "The spike limit must be a number greater than 0."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Energy Cost Stats options",
+        "description": "Select the energy sensors to report on and adjust the global settings.",
+        "data": {
+          "time_zone": "Time zone",
+          "spike_check": "Check for consumption spikes",
+          "spike_limit": "Spike limit",
+          "entities": "Energy sensors",
+          "edit_device_limits": "Edit per-device spike limits"
+        },
+        "data_description": {
+          "time_zone": "Used for tariff zones and daily, weekly and monthly groupings.",
+          "spike_check": "Flag hours with implausibly high consumption in the data-quality report.",
+          "spike_limit": "Maximum plausible consumption per device and hour. Ignored when the spike check is off.",
+          "entities": "Sensors with device class energy.",
+          "edit_device_limits": "Open an extra step to set a different spike limit for individual sensors."
+        }
+      },
+      "device_limits": {
+        "title": "Per-device spike limits",
+        "description": "Leave empty to use the global limit, 0 turns the check off for this device."
+      }
+    },
+    "error": {
+      "not_energy_entity": "Only sensors with device class energy can be selected.",
+      "invalid_limit": "Enter a finite number (greater than 0 for the global limit, 0 or more for a device)."
+    },
+    "abort": {
+      "invalid_options": "The stored options are invalid. Remove and add the integration again."
+    }
+  }
+}
