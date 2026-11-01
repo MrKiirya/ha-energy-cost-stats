@@ -83,6 +83,17 @@ while [ "$elapsed" -lt "$SMOKE_TIMEOUT" ]; do
         exit 1
     fi
 
+    # default_config: a dependency failure here (tasks/008-dev-ha-fixes.md
+    # decision 4) is a real dev-environment regression -- with the go2rtc
+    # binary pinned in the devcontainer image, default_config sets up
+    # cleanly, so this must fail, not only be reported. HA wording from
+    # homeassistant/setup.py, unchanged between 2025.4.0 and 2026.9.3.
+    if grep -qE "Setup failed for .*'default_config'|Unable to set up dependencies of 'default_config'" "$LOG_FILE"; then
+        echo "default_config failed to set up its dependencies (see tasks/008-dev-ha-fixes.md)." >&2
+        tail -n 150 "$LOG_FILE" >&2 || true
+        exit 1
+    fi
+
     if [ "$port_ready" -ne 1 ] && curl -s -o /dev/null -w "%{http_code}" "http://127.0.0.1:8123/manifest.json" 2>/dev/null | grep -q "^200$"; then
         port_ready=1
     fi
@@ -129,4 +140,18 @@ if grep -qE "Activating recovery mode" "$LOG_FILE"; then
 fi
 
 echo "OK: HTTP 200 on :8123; log line: ${integration_line}"
+
+# Report only (tasks/008-dev-ha-fixes.md decision 4): a live install at HA
+# startup means the pre-install helper (script/setup / script/develop) missed
+# something -- a regression of tasks/008-dev-ha-fixes.md items 2 or 3 -- but
+# it is not itself a fatal error here (network/discovery flakiness would make
+# a hard failure noisy). "Attempting install of" is HA's
+# util/package.py::install_package() log line.
+if grep -qE "Attempting install of" "$LOG_FILE"; then
+    echo "Live installs during this run (see tasks/008-dev-ha-fixes.md):"
+    grep -E "Attempting install of" "$LOG_FILE"
+else
+    echo "Live installs during this run: no live installs"
+fi
+
 exit 0
