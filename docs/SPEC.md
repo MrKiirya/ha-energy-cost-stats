@@ -101,6 +101,71 @@ Semantics (engine, `build_report`; details in tasks/006-pricing-and-grouping.md)
   decimals, kWh 3, prices 4. A displayed total may therefore differ from the sum of the displayed cells
   by 0.01; this is accepted.
 
+- **No tariff plan.** No tariff plan → every hour unpriced; `cost` is `null` (task 012). `build_report` and
+  `classify_hours` accept `schedule=None`: `zones` and `plans` are empty and `unpriced_hours` equals the
+  window's hours. Counted kWh still appear in `kwh` and `unpriced_kwh`, and data quality still applies.
+
+### JSON contract (schema_version 1)
+`engine/serialize.py::report_to_json` turns a `Report` into the document below. The websocket `report`
+command and the service return it unchanged; the stage 4 card consumes it. This is the only place where
+values are rounded (see Rounding above).
+
+```json
+{
+  "schema_version": 1,
+  "time_zone": "Europe/Moscow",
+  "currency": "EUR",
+  "start": "2026-01-15T00:00:00+03:00",
+  "end": "2026-01-16T00:00:00+03:00",
+  "grouping": "day",
+  "zones": [ { "key": "t1", "name": "Day" }, { "key": "t2", "name": "Night" } ],
+  "plans": [ { "valid_from": "2026-01-01", "name": "Two-zone", "zones": [ "...as stored (§3)" ] } ],
+  "devices": [ { "entity_id": "sensor.plug_01", "name": "Plug 01", "statistics": "ok" } ],
+  "buckets": [ "<bucket>" ],
+  "totals": "<bucket>",
+  "unpriced_hours": 0,
+  "issues": [ { "kind": "estimated", "entity_id": "sensor.plug_01",
+                "start": "2026-01-15T05:00:00+03:00", "end": "2026-01-15T10:00:00+03:00",
+                "hours": 5, "kwh": "10.000" } ]
+}
+```
+
+`<bucket>` is `{ "start", "end", "hours", "rows": [<row>, ...], "total": <row> }`. `<row>` is:
+
+```json
+{ "entity_id": "sensor.plug_01", "kwh": "29.000", "cost": "240.00",
+  "unpriced_kwh": "0.000", "estimated_kwh": "10.000", "excluded_kwh": "0.000",
+  "status": "estimated",
+  "coverage": { "expected": 24, "measured": 19, "estimated": 5, "excluded": 0, "missing": 0 },
+  "zones": [ { "key": "t1", "kwh": "19.000", "cost": "195.70", "price": "10.3000" },
+             { "key": "t2", "kwh": "10.000", "cost": "44.30", "price": "4.4300" } ] }
+```
+
+- **Numbers are decimal strings** in plain notation, after rounding: kWh 3 decimals, money 2, prices 4
+  (`ROUND_HALF_UP`, never `-0`), e.g. `"240.00"`, `"29.000"`, `"10.3000"`. Hour counts (`hours`,
+  `unpriced_hours`, `coverage.*`) are JSON integers. No floats are ever produced; automations apply
+  `| float` in templates.
+- **`null` vs `"0.000"`.** `kwh`/`cost` of a row or zone cell are `null` when there is no data (the "unknown"
+  state of the semantics above); a measured zero is `"0.000"` / `"0.00"`. `unpriced_kwh`, `estimated_kwh`
+  and `excluded_kwh` are always strings. A zone cell `price` is `null` when several prices applied in the
+  bucket (plan switch) or the zone was not in force.
+- **Times** are ISO 8601 with the UTC offset, in the report time zone (`datetime.isoformat()`), for the
+  top-level `start`/`end`, bucket and issue times. `time_zone` is the IANA name and `currency` the code
+  passed by the integration (HA's currency), or `null`.
+- **Alignment.** `zones` lists `Report.zones` in order; every row's `zones` has one entry per zone in the
+  same order, each repeating its `key`. `devices` is in row order; the total row has `"entity_id": null`.
+  With grouping `total`, `buckets` is `[totals]`.
+- **Rows.** `status` is `complete` / `estimated` / `partial` / `missing`. Totals are rounded from exact
+  sums, not summed from rounded cells.
+- **Plans** are the stored plan data (`plan_to_data`, §3), unrounded, for the plans in force in the window.
+- **Issues.** `kind` is `estimated` / `excluded_negative` / `excluded_spike`; `hours` is the number of
+  real elapsed hours of the issue span (not wall-clock, so correct across DST changes) and `kwh` its rounded energy.
+- **`devices[].statistics`** is the recorder adapter's status string (e.g. `ok`, `no_statistics`,
+  `unsupported`).
+- **Versioning.** New keys may be added without a version bump (consumers must ignore unknown keys);
+  removing or renaming a key, or changing a value's meaning or format, bumps `schema_version`.
+  `effective_price` is intentionally not serialized (the card derives it from `cost` / `kwh`).
+
 ## 5. Known pitfalls to handle
 - Engine input is hourly deltas keyed by **UTC hour start**; zones, plan switches and groupings use local
   time (IANA tz via `zoneinfo`); DST days have 23/25 hours and are handled; weeks start on Monday; months
