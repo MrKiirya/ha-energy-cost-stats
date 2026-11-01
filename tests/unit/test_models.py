@@ -159,6 +159,7 @@ def test_device_series_from_floats():
         (24, 20, 4, 0, 0, DataStatus.ESTIMATED),
         (24, 20, 0, 0, 4, DataStatus.PARTIAL),
         (24, 20, 2, 1, 1, DataStatus.PARTIAL),
+        (24, 20, 0, 4, 0, DataStatus.PARTIAL),
         (24, 0, 0, 0, 24, DataStatus.MISSING),
         (24, 0, 0, 24, 0, DataStatus.MISSING),
         (0, 0, 0, 0, 0, DataStatus.MISSING),
@@ -180,6 +181,8 @@ def test_coverage_invariant_and_add():
         Coverage(expected=24, measured=1, estimated=0, excluded=0, missing=0)
     with pytest.raises(ValueError):
         Coverage(expected=-1, measured=0, estimated=0, excluded=0, missing=0)
+    with pytest.raises(ValueError):
+        Coverage(True, 1, 0, 0, 0)  # type: ignore[arg-type]
 
     total = Coverage(24, 24, 0, 0, 0) + Coverage(24, 20, 0, 0, 4)
     assert total == Coverage(48, 44, 0, 0, 4)
