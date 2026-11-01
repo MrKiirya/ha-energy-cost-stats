@@ -6,7 +6,13 @@ from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import voluptuous as vol
-from homeassistant.config_entries import ConfigFlow, ConfigFlowResult, OptionsFlow
+from homeassistant.config_entries import (
+    ConfigEntry,
+    ConfigFlow,
+    ConfigFlowResult,
+    ConfigSubentryFlow,
+    OptionsFlow,
+)
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.selector import (
@@ -32,6 +38,7 @@ from .const import (
     DEFAULT_SPIKE_LIMIT,
     DEFAULT_TITLE,
     DOMAIN,
+    SUBENTRY_TYPE_TARIFF_PLAN,
 )
 from .settings import (
     IntegrationSettings,
@@ -39,6 +46,7 @@ from .settings import (
     settings_from_options,
     settings_to_options,
 )
+from .subentry_flow import TariffPlanSubentryFlow
 
 _ENERGY = "energy"
 
@@ -122,6 +130,14 @@ class EnergyCostStatsConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> "EnergyCostStatsOptionsFlow":
         """Return the options flow (constructed without the config entry)."""
         return EnergyCostStatsOptionsFlow()
+
+    @classmethod
+    @callback
+    def async_get_supported_subentry_types(
+        cls, config_entry: ConfigEntry
+    ) -> dict[str, type[ConfigSubentryFlow]]:
+        """Tariff plans are config subentries."""
+        return {SUBENTRY_TYPE_TARIFF_PLAN: TariffPlanSubentryFlow}
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
