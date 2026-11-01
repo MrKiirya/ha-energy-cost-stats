@@ -37,3 +37,22 @@ CONF_PLAN_NAME: Final = "name"
 def zone_field(key: str, suffix: str) -> str:
     """Form field name of a zone attribute, e.g. ``t1_price``."""
     return f"{key}_{suffix}"
+
+
+# Report API (docs/SPEC.md §2): websocket command, service, request fields, errors.
+SERVICE_GET_REPORT: Final = "get_report"
+WS_TYPE_REPORT: Final = "energy_cost_stats/report"
+
+ATTR_START: Final = "start"
+ATTR_END: Final = "end"
+ATTR_GROUPING: Final = "grouping"
+ATTR_ENTITIES: Final = "entities"
+
+ERR_NOT_LOADED: Final = "not_loaded"
+ERR_INVALID_PERIOD: Final = "invalid_period"
+ERR_PERIOD_TOO_LONG: Final = "period_too_long"
+ERR_UNKNOWN_ENTITY: Final = "unknown_entity"
+
+# Hourly reports are limited to 31 days plus the closing hour (745 buckets).
+MAX_HOURLY_DAYS: Final = 31
+MAX_PERIOD_DAYS: Final = 3660
