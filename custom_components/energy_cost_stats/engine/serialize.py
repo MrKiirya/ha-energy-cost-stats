@@ -33,6 +33,8 @@ class DeviceInfo:
     name: str
     statistics: str
     """Adapter status value, e.g. ``"ok"``, ``"no_statistics"``, ``"unsupported"``."""
+    upstream: str | None = None
+    """The device this one is measured inside of (excluded from the totals)."""
 
 
 def _num(value: Decimal | None, rounder: Callable[[Decimal], Decimal]) -> str | None:
@@ -141,7 +143,12 @@ def report_to_json(
         "zones": [{"key": z.key, "name": z.name} for z in report.zones],
         "plans": [plan_to_data(p) for p in report.plans],
         "devices": [
-            {"entity_id": d.device_id, "name": d.name, "statistics": d.statistics}
+            {
+                "entity_id": d.device_id,
+                "name": d.name,
+                "statistics": d.statistics,
+                "upstream": d.upstream,
+            }
             for d in devices
         ],
         "buckets": [_bucket(b) for b in report.buckets],

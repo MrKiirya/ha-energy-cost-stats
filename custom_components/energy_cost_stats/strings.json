@@ -37,19 +37,55 @@
       },
       "sensors": {
         "title": "Sensors",
-        "description": "Select the energy sensors to report on.",
+        "description": "{count} sensors in the calculation.\n\n{sensors}",
+        "menu_options": {
+          "sensors_select": "Change the selection",
+          "device_limits": "Per-sensor spike limits"
+        }
+      },
+      "sensors_select": {
+        "title": "Select sensors",
+        "description": "Choose how the sensors are picked. Sensors are resolved every time a report is built, so new energy sensors are included without further changes. The include rules are ignored in Energy dashboard mode. Exclude always wins. Globs match the entity id, e.g. `sensor.*_plug_*_energy`.",
         "data": {
-          "entities": "Energy sensors",
-          "edit_device_limits": "Edit per-device spike limits"
+          "mode": "Mode"
         },
         "data_description": {
-          "entities": "Sensors with device class energy.",
-          "edit_device_limits": "Open an extra step to set a different spike limit for individual sensors."
+          "mode": "Energy dashboard uses the individual devices of the Energy dashboard; a device measured inside another one is not counted twice in the totals. Filter selects sensors by rules."
+        },
+        "sections": {
+          "include": {
+            "name": "Include (filter mode)",
+            "description": "Everything that has energy statistics, or only what matches the rules below.",
+            "data": {
+              "all": "All energy sensors",
+              "target": "Sensors, devices, areas, floors or labels",
+              "entity_globs": "Entity id patterns"
+            },
+            "data_description": {
+              "all": "When on, the rules below are ignored."
+            }
+          },
+          "exclude": {
+            "name": "Exclude",
+            "description": "Sensors that are never included, whatever the mode.",
+            "data": {
+              "target": "Sensors, devices, areas, floors or labels",
+              "entity_globs": "Entity id patterns"
+            }
+          }
+        }
+      },
+      "sensors_preview": {
+        "title": "Preview",
+        "description": "The new selection would have {count} sensors.\n\n{sensors}",
+        "menu_options": {
+          "sensors_save": "Save the selection",
+          "sensors_select": "Edit again"
         }
       },
       "device_limits": {
-        "title": "Per-device spike limits",
-        "description": "Leave empty to use the global limit, 0 turns the check off for this device."
+        "title": "Per-sensor spike limits",
+        "description": "Leave empty to use the global limit, 0 turns the check off for the sensor."
       },
       "general": {
         "title": "General settings",
@@ -137,16 +173,21 @@
       }
     },
     "error": {
-      "not_energy_entity": "Only sensors with device class energy can be selected.",
       "invalid_limit": "Enter a finite number (greater than 0 for the global limit, 0 or more for a device).",
       "duplicate_from": "Another change already starts on this date.",
       "no_version": "The tariff has no version valid on this date (earliest: {first_valid_from}).",
       "unknown_tariff": "This tariff does not exist.",
-      "invalid_config": "The configuration would be invalid: {detail}"
+      "invalid_config": "The configuration would be invalid: {detail}",
+      "no_dashboard_devices": "The Energy dashboard has no individual devices.",
+      "nothing_included": "Turn on \"All energy sensors\" or add at least one sensor, device, area, floor, label or pattern to include.",
+      "invalid_glob": "\"{glob}\" is not a valid pattern (lowercase letters, digits and _ . * ? [ ] ! - only).",
+      "invalid_target": "Templates are not supported here; select entries from the lists.",
+      "invalid_mode": "Choose one of the listed modes."
     },
     "abort": {
       "invalid_options": "The stored options are invalid. Remove and add the integration again.",
-      "no_tariffs": "Add a tariff first."
+      "no_tariffs": "Add a tariff first.",
+      "no_sensors": "There are no sensors to set limits for."
     }
   },
   "config_subentries": {
@@ -527,6 +568,12 @@
         "month": "Month",
         "total": "Total"
       }
+    },
+    "sensor_mode": {
+      "options": {
+        "energy_dashboard": "Energy dashboard",
+        "filter": "Filter"
+      }
     }
   },
   "services": {
@@ -564,7 +611,7 @@
       "message": "The period is too long (at most {max})."
     },
     "unknown_entity": {
-      "message": "{entity_id} is not one of the configured energy sensors."
+      "message": "{entity_id} is not one of the selected energy sensors."
     },
     "unknown_tariff": {
       "message": "{tariff_id} is not a configured tariff."

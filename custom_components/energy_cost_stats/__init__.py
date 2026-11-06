@@ -38,10 +38,12 @@ from .engine.tariff import TariffSchedule, TariffValidationError
 from .engine.tariff_config import TariffConfig, config_from_data, effective_schedule
 from .engine.tariff_edit import remove_from_applied
 from .frontend import async_register_card
+from .sensor_resolver import async_default_sensor_settings
 from .services import async_register_services
 from .settings import (
     IntegrationSettings,
     SettingsError,
+    migrate_sensor_options,
     settings_from_options,
     tariff_document,
 )
@@ -138,8 +140,12 @@ def _plan_to_version(data: Any) -> dict[str, Any]:
 async def async_migrate_entry(
     hass: HomeAssistant, entry: EnergyCostStatsConfigEntry
 ) -> bool:
-    """Migrate version 1 (``tariff_plan`` subentries) to version 2 (one tariff)."""
-    if entry.version > 2:
+    """Migrate to version 3.
+
+    Version 1 (``tariff_plan`` subentries) becomes version 2 (``tariff`` subentries),
+    version 2 (``entities`` + ``device_spike_limits``) becomes version 3 (``sensors``).
+    """
+    if entry.version > 3:
         return False
     if entry.version == 1:
         old = sorted(
@@ -175,6 +181,15 @@ async def async_migrate_entry(
         if new_subentry is not None:
             hass.config_entries.async_add_subentry(entry, new_subentry)
         hass.config_entries.async_update_entry(entry, options=options, version=2)
+    if entry.version == 2:
+        default = (
+            {}
+            if entry.options.get("entities")
+            else await async_default_sensor_settings(hass)
+        )
+        hass.config_entries.async_update_entry(
+            entry, options=migrate_sensor_options(entry.options, default), version=3
+        )
     return True
 
 

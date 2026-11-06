@@ -12,7 +12,7 @@ used by `build_report`.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import timedelta
 from decimal import Decimal, localcontext
 
@@ -60,6 +60,7 @@ class _Acc:
         "estimated_kwh",
         "excluded",
         "excluded_kwh",
+        "expected",
         "kwh",
         "measured",
         "missing",
@@ -70,6 +71,7 @@ class _Acc:
 
     def __init__(self) -> None:
         self.counted = 0
+        self.expected = 0
         self.measured = 0
         self.estimated = 0
         self.excluded = 0
@@ -86,13 +88,59 @@ def _zero() -> Decimal:
     return Decimal(0)
 
 
+def _is_counted(value: HourValue | None) -> bool:
+    return value is not None and value.kind is not HourKind.EXCLUDED
+
+
+def _add_hour(
+    targets: Sequence[_Acc],
+    value: HourValue | None,
+    zone_key: str | None,
+    price: Decimal | None,
+) -> None:
+    """Add one hour of one device to the accumulators in ``targets``."""
+    for acc in targets:
+        acc.expected += 1
+    if value is None:
+        for acc in targets:
+            acc.missing += 1
+        return
+    if value.kind is HourKind.EXCLUDED:
+        for acc in targets:
+            acc.excluded += 1
+            acc.excluded_kwh += value.kwh
+        return
+    for acc in targets:
+        acc.counted += 1
+        acc.kwh += value.kwh
+        if value.kind is HourKind.ESTIMATED:
+            acc.estimated += 1
+            acc.estimated_kwh += value.kwh
+        else:
+            acc.measured += 1
+        if zone_key is None or price is None:
+            acc.unpriced_kwh += value.kwh
+        else:
+            acc.zone_kwh[zone_key] = acc.zone_kwh.get(zone_key, _zero()) + value.kwh
+            acc.zone_cost[zone_key] = (
+                acc.zone_cost.get(zone_key, _zero()) + value.kwh * price
+            )
+
+
 def assemble_report(
     request: ReportRequest,
     hours: Sequence[_classify.HourInfo],
     prepared: Sequence[PreparedSeries],
     issues: Sequence[QualityIssue] = (),
+    nested: Mapping[str, str] | None = None,
 ) -> Report:
-    """Pure aggregation of classified hours and prepared series into a `Report`."""
+    """Pure aggregation of classified hours and prepared series into a `Report`.
+
+    ``nested`` maps a device id to the id of the device it is measured inside of. The
+    nested device keeps its row, but an hour of it is left out of every ``total`` row
+    only when the upstream has a counted value for that same hour; otherwise it counts.
+    Ids that are not devices of the report are ignored.
+    """
     if not hours:
         raise ValueError("hours must not be empty")
     seen: set[str] = set()
@@ -107,7 +155,7 @@ def assemble_report(
         seen.add(series.device_id)
 
     with localcontext(prec=_PRECISION):
-        return _assemble(request, hours, prepared, tuple(issues))
+        return _assemble(request, hours, prepared, tuple(issues), nested or {})
 
 
 def _assemble(
@@ -115,6 +163,7 @@ def _assemble(
     hours: Sequence[_classify.HourInfo],
     prepared: Sequence[PreparedSeries],
     issues: tuple[QualityIssue, ...],
+    nested: Mapping[str, str],
 ) -> Report:
     grouping = Grouping(request.grouping)
     tz = request.time_zone
@@ -175,37 +224,28 @@ def _assemble(
         per_slot = [_Acc() for _ in range(n_slots)]
         for i, value in enumerate(series.values):
             targets = (per_slot[bucket_of[i]], per_slot[total_slot])
-            if value is None:
-                for acc in targets:
-                    acc.missing += 1
-                continue
-            if value.kind is HourKind.EXCLUDED:
-                for acc in targets:
-                    acc.excluded += 1
-                    acc.excluded_kwh += value.kwh
-                continue
-            zone_key = zone_of[i]
-            price = price_of[i]
-            for acc in targets:
-                acc.counted += 1
-                acc.kwh += value.kwh
-                if value.kind is HourKind.ESTIMATED:
-                    acc.estimated += 1
-                    acc.estimated_kwh += value.kwh
-                else:
-                    acc.measured += 1
-                if zone_key is None or price is None:
-                    acc.unpriced_kwh += value.kwh
-                else:
-                    acc.zone_kwh[zone_key] = (
-                        acc.zone_kwh.get(zone_key, _zero()) + value.kwh
-                    )
-                    acc.zone_cost[zone_key] = (
-                        acc.zone_cost.get(zone_key, _zero()) + value.kwh * price
-                    )
+            _add_hour(targets, value, zone_of[i], price_of[i])
         accs.append(per_slot)
 
-    def device_row(device_id: str, acc: _Acc, slot: int, expected: int) -> Row:
+    # Total rows: a nested device's hour is skipped where an ancestor has a value.
+    position = {series.device_id: index for index, series in enumerate(prepared)}
+    total_accs = [_Acc() for _ in range(n_slots)]
+    for series in prepared:
+        ancestors: list[Sequence[HourValue | None]] = []
+        seen = {series.device_id}
+        current = nested.get(series.device_id)
+        while current is not None and current not in seen:
+            seen.add(current)
+            if current in position:
+                ancestors.append(prepared[position[current]].values)
+            current = nested.get(current)
+        for i, value in enumerate(series.values):
+            if any(_is_counted(values[i]) for values in ancestors):
+                continue
+            targets = (total_accs[bucket_of[i]], total_accs[total_slot])
+            _add_hour(targets, value, zone_of[i], price_of[i])
+
+    def device_row(device_id: str | None, acc: _Acc, slot: int, expected: int) -> Row:
         prices = slot_prices[slot]
         zone_cells = tuple(
             ZoneCell(
@@ -233,35 +273,6 @@ def _assemble(
             ),
         )
 
-    def sum_optional(values: Sequence[Decimal | None]) -> Decimal | None:
-        present = [v for v in values if v is not None]
-        return sum(present, _zero()) if present else None
-
-    def total_row(rows: tuple[Row, ...], slot: int) -> Row:
-        prices = slot_prices[slot]
-        zone_cells = tuple(
-            ZoneCell(
-                key=key,
-                kwh=sum_optional([r.zones[j].kwh for r in rows]),
-                cost=sum_optional([r.zones[j].cost for r in rows]),
-                price=prices.get(key),
-            )
-            for j, key in enumerate(zone_keys)
-        )
-        coverage = Coverage.empty()
-        for r in rows:
-            coverage = coverage + r.coverage
-        return Row(
-            device_id=None,
-            zones=zone_cells,
-            kwh=sum_optional([r.kwh for r in rows]),
-            cost=sum_optional([r.cost for r in rows]),
-            unpriced_kwh=sum((r.unpriced_kwh for r in rows), _zero()),
-            estimated_kwh=sum((r.estimated_kwh for r in rows), _zero()),
-            excluded_kwh=sum((r.excluded_kwh for r in rows), _zero()),
-            coverage=coverage,
-        )
-
     def make_bucket(slot: int, first: int, last: int) -> Bucket:
         count = last - first + 1
         rows = tuple(
@@ -273,7 +284,7 @@ def _assemble(
             end=(hours[last].utc_start + _HOUR).astimezone(tz),
             hours=count,
             rows=rows,
-            total=total_row(rows, slot),
+            total=device_row(None, total_accs[slot], slot, total_accs[slot].expected),
         )
 
     totals = make_bucket(total_slot, 0, len(hours) - 1)
@@ -302,6 +313,7 @@ def build_report(
     devices: Sequence[DeviceSeries],
     *,
     quality: QualitySettings | None = None,
+    nested: Mapping[str, str] | None = None,
 ) -> Report:
     """Build the full report for ``request`` from ``schedule`` and ``devices``.
 
@@ -328,4 +340,4 @@ def build_report(
         )
         prepared.append(series)
         issues.extend(device_issues)
-    return assemble_report(request, hours, prepared, issues)
+    return assemble_report(request, hours, prepared, issues, nested)
