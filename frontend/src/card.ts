@@ -103,7 +103,7 @@ export class EnergyCostStatsCard extends LitElement {
   private _comparison?: ComparisonDocument;
   private _comparisonError?: string;
   private _comparisonSeq = 0;
-  /** Period + sensors of the shown (or requested) comparison; it ignores the grouping. */
+  /** Period, sensors and scenarios of the shown (or requested) comparison; not the grouping. */
   private _comparisonKey?: string;
   /** The integration's time zone, learned from the first report (kept on errors). */
   private _reportTimeZone?: string;
@@ -156,8 +156,13 @@ export class EnergyCostStatsCard extends LitElement {
       // Config edited in the dashboard editor: start over from the configured period.
       this._period = undefined;
       this._report = undefined;
-      this._comparison = undefined;
     }
+    // Any config change (e.g. an edited scenario price) invalidates the comparison:
+    // drop the shown result and error, and discard a request still in flight.
+    this._comparison = undefined;
+    this._comparisonError = undefined;
+    this._comparisonKey = undefined;
+    this._comparisonSeq += 1;
   }
 
   getCardSize(): number {
@@ -253,7 +258,7 @@ export class EnergyCostStatsCard extends LitElement {
         // integration's: ask again with the right one.
         void this._load(refresh);
       } else if (this._config?.compare) {
-        const key = JSON.stringify([period, this._config.entities ?? []]);
+        const key = JSON.stringify([period, this._config.entities ?? [], this._config.compare]);
         if (key !== this._comparisonKey) {
           // Never show another period's numbers next to this report.
           this._comparison = undefined;
