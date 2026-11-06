@@ -193,7 +193,20 @@ the repo as is, with no build step) and CI fails when it does not match the sour
   extra module does this by itself.
 - **Config.** `title`, `entities` (subset of the configured sensors; default all), `period` (initial preset,
   default `this_month`), `grouping` (`auto` / `hour` / `day` / `week` / `month` for the "by period" table,
-  default `auto`), `show_breakdown` (bool). No visual editor yet.
+  default `auto`), `show_breakdown` (bool), `period_source` (`card` / `energy`, default `card`) and
+  `collection_key` (must start with `energy_`, as HA requires). No visual editor yet.
+- **Following HA's energy date picker** (task 016, opt-in). With `period_source: energy` the card follows the period
+  of Home Assistant's `energy-date-selection` card on the same dashboard, and shows its own picker with a note when
+  there is none. The picker keeps its period in an "energy collection" on the websocket connection,
+  `connection["_" + key]` with `key` = the picker card's `collection_key`, by default `energy_<dashboard url path>`
+  (`hass.panelUrl`; HA frontend `src/data/energy.ts`, checked on `dev` 2026-11-06). Every HA energy card creates
+  that collection, not only the picker — so its presence does not prove a picker is shown, which is why following
+  is opt-in. **Not a public API:** the card only reads `start`/`end` and `subscribe()`, validates the shape,
+  retries until the collection appears (but not after `subscribe()` threw), re-attaches after a config edit,
+  unsubscribes when removed, and falls back to its own picker. HA keeps the bounds at a midnight / end of day in the
+  browser's zone or, with the profile setting `server`, in HA's zone (`hass.locale.time_zone`); the card reads the
+  picked calendar dates in that same zone and then reports them in the integration's zone like any other period.
+  While following, the own picker is replaced by a period line.
 - **Period picker** (modelled on the Energy dashboard's period selector). A period is a closed range of local
   dates. Presets: today, yesterday, this/last week, this/last month, this quarter, this year, last 7 / 30 days,
   last 12 months, or a custom range. Arrows move by the period's own size: a range of whole calendar months

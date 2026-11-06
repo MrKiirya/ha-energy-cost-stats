@@ -1,6 +1,6 @@
 # 016 — Follow Home Assistant's energy date picker
 
-Status: in-review (proposal from the night run; round 1: 3 required — fixed; round 2: APPROVE)
+Status: in-review (round 1: 3 required — fixed; round 2: APPROVE)
 Roadmap: stage 4 (card)
 Spec sections: SPEC §4.1
 
@@ -54,3 +54,5 @@ keeps its own picker.
   (`hass.locale.time_zone` `server` → HA's zone, else the browser's) instead of "12 h inside", which failed for zones
   12 h or more apart. Suggestions applied: `hass.panelUrl` for the dashboard path; a collection whose
   `subscribe()` threw is not retried on every update; `collection_key` must start with `energy_`.
+- Ported onto `master` without task 015 (tariff comparison was withdrawn in favour of tariffs configured in the
+  integration): the reviewed code is unchanged apart from the comparison parts it was stacked on.
