@@ -14,10 +14,30 @@ CONF_DEVICE_SPIKE_LIMITS: Final = "device_spike_limits"
 CONF_ENTITIES: Final = "entities"
 CONF_APPLIED: Final = "applied"
 CONF_COMPARE: Final = "compare"
+CONF_PANEL: Final = "panel"
 
 # Form-only keys (never stored).
 CONF_SPIKE_CHECK: Final = "spike_check"
 CONF_EDIT_DEVICE_LIMITS: Final = "edit_device_limits"
+
+CONF_USE_DEFAULT: Final = "use_default"
+CONF_TARIFFS: Final = "tariffs"
+CONF_CHANGE: Final = "change"
+CONF_DELETE: Final = "delete"
+CONF_FROM: Final = "from"
+CONF_TARIFF: Final = "tariff"
+CONF_SIDEBAR: Final = "sidebar"
+CONF_SHOW: Final = "show"
+CONF_TITLE: Final = "title"
+CONF_ICON: Final = "icon"
+
+# Sidebar panel defaults (the panel itself is not implemented yet).
+DEFAULT_PANEL_SHOW: Final = False
+DEFAULT_PANEL_TITLE: Final = "Energy cost"
+DEFAULT_PANEL_ICON: Final = "mdi:cash-multiple"
+
+# Options menu step ids.
+MENU_STEPS: Final = ("sensors", "applied", "compare", "general")
 
 # Default spike limit in kWh per hour (SPEC §5).
 DEFAULT_SPIKE_LIMIT: Final = Decimal("4")
@@ -42,7 +62,6 @@ CONF_SOURCE: Final = "source"
 CONF_COUNT: Final = "count"
 CONF_VALID_FROM: Final = "valid_from"
 CONF_VERSION: Final = "version"
-CONF_DELETE: Final = "delete"
 SECTION_HOURS: Final = "hours"
 
 # Report API (docs/SPEC.md §2): websocket command, service, request fields, errors.

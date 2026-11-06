@@ -6,7 +6,7 @@ the global limit". Decimals are stored as normalized strings (no exponent).
 The time zone name is not validated here (that needs Home Assistant's async helper).
 """
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from types import MappingProxyType
@@ -17,6 +17,7 @@ from .const import (
     CONF_COMPARE,
     CONF_DEVICE_SPIKE_LIMITS,
     CONF_ENTITIES,
+    CONF_PANEL,
     CONF_SPIKE_LIMIT,
     CONF_TIME_ZONE,
 )
@@ -29,12 +30,22 @@ _KNOWN_KEYS = frozenset(
         CONF_ENTITIES,
         CONF_APPLIED,
         CONF_COMPARE,
+        CONF_PANEL,
     }
 )
 
 
 class SettingsError(ValueError):
     """Stored options are malformed."""
+
+
+@dataclass(frozen=True)
+class PanelSettings:
+    """Sidebar panel options (stored only; the panel itself comes later)."""
+
+    show: bool
+    title: str
+    icon: str
 
 
 @dataclass(frozen=True)
@@ -49,6 +60,8 @@ class IntegrationSettings:
     applied: tuple[tuple[str, str], ...] = ()
     # Explicit compare list (tariff ids); ``None`` = every tariff never applied.
     compare: tuple[str, ...] | None = None
+    # Sidebar panel options; ``None`` = never configured.
+    panel: PanelSettings | None = None
 
     def __post_init__(self) -> None:
         """Make the override mapping read-only."""
@@ -73,6 +86,19 @@ def _parse_limit(value: Any, what: str) -> Decimal:
 
 def _format_limit(value: Decimal) -> str:
     return format(value.normalize(), "f")
+
+
+def _parse_panel(raw: Any) -> PanelSettings:
+    if not isinstance(raw, Mapping) or set(raw) != {"show", "title", "icon"}:  # pyright: ignore[reportUnknownArgumentType]
+        raise SettingsError("panel must be a {show, title, icon} mapping")
+    show, title, icon = raw["show"], raw["title"], raw["icon"]
+    if not isinstance(show, bool):
+        raise SettingsError("panel show must be a boolean")
+    if not isinstance(title, str) or not title.strip():
+        raise SettingsError("panel title must be a non-blank string")
+    if not isinstance(icon, str) or not icon.strip():
+        raise SettingsError("panel icon must be a non-blank string")
+    return PanelSettings(show=show, title=title, icon=icon)
 
 
 def settings_from_options(options: Mapping[str, Any]) -> IntegrationSettings:
@@ -133,6 +159,8 @@ def settings_from_options(options: Mapping[str, Any]) -> IntegrationSettings:
             raise SettingsError("compare must be a list of tariff ids")
         compare = tuple(raw_compare)  # pyright: ignore[reportUnknownArgumentType]
 
+    panel = _parse_panel(options[CONF_PANEL]) if CONF_PANEL in options else None
+
     return IntegrationSettings(
         time_zone=time_zone,
         spike_limit=spike_limit,
@@ -140,6 +168,7 @@ def settings_from_options(options: Mapping[str, Any]) -> IntegrationSettings:
         entities=tuple(raw_entities),
         applied=tuple(applied),
         compare=compare,
+        panel=panel,
     )
 
 
@@ -164,4 +193,25 @@ def settings_to_options(settings: IntegrationSettings) -> dict[str, Any]:
         ]
     if settings.compare is not None:
         options[CONF_COMPARE] = list(settings.compare)
+    if settings.panel is not None:
+        options[CONF_PANEL] = {
+            "show": settings.panel.show,
+            "title": settings.panel.title,
+            "icon": settings.panel.icon,
+        }
     return options
+
+
+def tariff_document(
+    settings: IntegrationSettings, tariff_data: Iterable[Mapping[str, Any]]
+) -> dict[str, Any]:
+    """The configuration document for ``config_from_data`` (tariffs + options)."""
+    document: dict[str, Any] = {
+        "tariffs": list(tariff_data),
+        "applied": [
+            {"from": start, "tariff": tariff} for start, tariff in settings.applied
+        ],
+    }
+    if settings.compare is not None:
+        document["compare"] = list(settings.compare)
+    return document
