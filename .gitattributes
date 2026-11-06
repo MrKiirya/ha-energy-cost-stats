@@ -17,3 +17,6 @@
 *.woff2 binary
 *.db binary
 *.sqlite binary
+
+# Built card bundle (frontend/ sources -> npm run build): collapsed in diffs.
+custom_components/energy_cost_stats/frontend/*.js linguist-generated=true -diff

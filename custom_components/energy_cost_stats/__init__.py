@@ -4,7 +4,8 @@ Sets up the single config entry: parses the stored options into typed settings,
 resolves the time zone and keeps both in ``entry.runtime_data``. Options changes
 (and tariff-plan subentry changes) reload the entry through one update listener.
 The websocket command and the response-only service are registered once in
-``async_setup``; they read the loaded entry. No entities or platforms are created.
+``async_setup``; they read the loaded entry. ``async_setup`` also serves the
+Lovelace card bundle (``frontend.py``). No entities or platforms are created.
 """
 
 from dataclasses import dataclass
@@ -20,6 +21,7 @@ from homeassistant.util import dt as dt_util
 from .const import DOMAIN, SUBENTRY_TYPE_TARIFF_PLAN
 from .engine.plan_codec import plan_from_data
 from .engine.tariff import TariffPlan, TariffSchedule, TariffValidationError
+from .frontend import async_register_card
 from .services import async_register_services
 from .settings import IntegrationSettings, SettingsError, settings_from_options
 from .websocket import async_register_websocket
@@ -40,9 +42,10 @@ type EnergyCostStatsConfigEntry = ConfigEntry[RuntimeData]
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Register the websocket command and the service (no entities, no platforms)."""
+    """Register the websocket command, the service and the card (no entities)."""
     async_register_websocket(hass)
     async_register_services(hass)
+    await async_register_card(hass)
     return True
 
 

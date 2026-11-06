@@ -56,3 +56,6 @@ ERR_UNKNOWN_ENTITY: Final = "unknown_entity"
 # Hourly reports are limited to 31 days plus the closing hour (745 buckets).
 MAX_HOURLY_DAYS: Final = 31
 MAX_PERIOD_DAYS: Final = 3660
+
+# Lovelace card bundle served by the integration (frontend.py).
+CARD_URL: Final = "/energy_cost_stats/energy-cost-stats-card.js"
