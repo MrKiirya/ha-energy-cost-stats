@@ -228,8 +228,8 @@ export function exclusiveEnd(period: Period): string {
 
 /**
  * The `end` bound to request. For a period that contains today it is the start
- * of the current local hour (a datetime without offset, read by the backend in
- * the settings time zone), so the hours that have not happened yet are not
+ * of the current local hour (an ISO datetime with the zone's UTC offset), so
+ * the hours that have not happened yet are not
  * reported as missing data; the period's `[start, end]` dates stay as chosen.
  * Otherwise (or in a zone with a non-whole-hour UTC offset, where the backend
  * would reject such a bound) it is the exclusive end date.
@@ -260,7 +260,22 @@ export function requestEnd(
   // In the first hour of the period's first day there is no finished hour yet:
   // ask for that hour (it shows as not compiled yet) rather than an empty range.
   const endHour = period.start === today ? Math.max(hour, 1) : hour;
-  return `${today}T${String(endHour).padStart(2, "0")}:00:00`;
+  // Explicit UTC offset of that local hour: during a DST fall-back the repeated
+  // hour would be ambiguous as a naive local time.
+  const offset = utcOffset(timeZone, now, endHour - hour);
+  return `${today}T${String(endHour).padStart(2, "0")}:00:00${offset}`;
+}
+
+/** `+HH:MM` offset of `timeZone` at `now` shifted by `hours` hours. */
+function utcOffset(timeZone: string | undefined, now: Date, hours: number): string {
+  const at = new Date(now.getTime() + hours * 3_600_000);
+  const name =
+    new Intl.DateTimeFormat("en-US", { timeZone, timeZoneName: "longOffset" })
+      .formatToParts(at)
+      .find((p) => p.type === "timeZoneName")?.value ?? "GMT";
+  const match = /^GMT([+-]\d{2}):?(\d{2})?$/.exec(name);
+  if (!match) return "+00:00";
+  return `${match[1]}:${match[2] ?? "00"}`;
 }
 
 export type Grouping = "hour" | "day" | "week" | "month" | "total";

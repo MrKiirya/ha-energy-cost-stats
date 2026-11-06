@@ -5,6 +5,7 @@
  */
 
 import { LitElement, css, html, nothing, type PropertyValues, type TemplateResult } from "lit";
+import { live } from "lit/directives/live.js";
 import { Strings, type StringKey } from "./i18n";
 import {
   PRESETS,
@@ -12,9 +13,11 @@ import {
   autoGrouping,
   containsDate,
   currentPeriod,
+  exclusiveEnd,
   groupingAllowed,
   isValidDate,
   presetPeriod,
+  requestEnd,
   shiftPeriod,
   todayIn,
   type Grouping,
@@ -88,6 +91,10 @@ export class EnergyCostStatsCard extends LitElement {
   private _customEnd = "";
   private _breakdownEntity = "";
   private _requestSeq = 0;
+  /** The integration's time zone, learned from the first report (kept on errors). */
+  private _reportTimeZone?: string;
+  /** The last request was cut at the current hour: refresh until it is not. */
+  private _lastRequestOpen = false;
   private _timer?: ReturnType<typeof setInterval>;
 
   static getStubConfig(): CardConfig {
@@ -130,7 +137,7 @@ export class EnergyCostStatsCard extends LitElement {
 
   /** The report's time zone once known (the integration setting), else HA's. */
   private get _timeZone(): string | undefined {
-    return this._report?.time_zone ?? this.hass?.config?.time_zone;
+    return this._reportTimeZone ?? this.hass?.config?.time_zone;
   }
 
   private _today(): string {
@@ -149,7 +156,9 @@ export class EnergyCostStatsCard extends LitElement {
   override connectedCallback(): void {
     super.connectedCallback();
     this._timer = setInterval(() => {
-      if (this._period && containsDate(this._period, this._today()) && !this._loading) {
+      // Keep refreshing while the period is still running, plus once after it ended
+      // (its last hour is only compiled then).
+      if (this._period && this._lastRequestOpen && !this._loading) {
         void this._load();
       }
     }, REFRESH_MS);
@@ -185,17 +194,25 @@ export class EnergyCostStatsCard extends LitElement {
     const period = this._period;
     if (!hass || !period) return;
     const seq = ++this._requestSeq;
+    const timeZone = this._timeZone;
     this._loading = true;
     try {
       const report = await fetchReport(hass, {
         period,
         grouping: this.grouping,
         entities: this._config?.entities,
-        timeZone: this._timeZone,
+        timeZone,
       });
       if (seq !== this._requestSeq) return;
       this._report = report;
       this._error = undefined;
+      this._reportTimeZone = report.time_zone;
+      this._lastRequestOpen = requestEnd(period, report.time_zone) !== exclusiveEnd(period);
+      if (report.time_zone !== timeZone && containsDate(period, todayIn(report.time_zone))) {
+        // "Today" and the current hour were computed in HA's zone, not the
+        // integration's: ask again with the right one.
+        void this._load();
+      }
     } catch (err) {
       if (seq !== this._requestSeq) return;
       const code = errorCode(err);
@@ -305,7 +322,7 @@ export class EnergyCostStatsCard extends LitElement {
         <select
           class="preset"
           aria-label=${s.t("period")}
-          .value=${preset}
+          .value=${live(preset)}
           @change=${this._onPreset}
         >
           <option value="" ?hidden=${preset !== ""} ?selected=${preset === ""}>
@@ -495,7 +512,12 @@ export class EnergyCostStatsCard extends LitElement {
     const entity = this._breakdownEntity;
     const index = entity ? report.devices.findIndex((d) => d.entity_id === entity) : -1;
     const pick = (bucket: Bucket): Row =>
-      index >= 0 ? (bucket.rows[index] ?? bucket.total) : bucket.total;
+      (index >= 0 ? bucket.rows.find((row) => row.entity_id === entity) : undefined) ??
+      bucket.total;
+    // A choice the period does not allow (hours over 31 days) falls back to auto.
+    const choice = this._groupingChoice;
+    const shownGrouping =
+      choice === "auto" || groupingAllowed(choice, this._period!) ? choice : "auto";
     return html`
       <details class="breakdown" ?open=${this._config?.show_breakdown ?? false}>
         <summary>${s.t("breakdown")}</summary>
@@ -504,7 +526,7 @@ export class EnergyCostStatsCard extends LitElement {
             >${s.t("breakdown_device")}
             <select
               class="breakdown-device"
-              .value=${index >= 0 ? entity : ""}
+              .value=${live(index >= 0 ? entity : "")}
               @change=${(ev: Event) => {
                 this._breakdownEntity = (ev.target as HTMLSelectElement).value;
               }}
@@ -520,13 +542,13 @@ export class EnergyCostStatsCard extends LitElement {
           </label>
           <label
             >${s.t("grouping")}
-            <select class="grouping" .value=${this._groupingChoice} @change=${this._onGrouping}>
+            <select class="grouping" .value=${live(shownGrouping)} @change=${this._onGrouping}>
               ${GROUPING_CHOICES.map((g) => {
                 const allowed = g === "auto" || groupingAllowed(g, this._period!);
                 return html`<option
                   value=${g}
                   ?disabled=${!allowed}
-                  ?selected=${g === this._groupingChoice}
+                  ?selected=${g === shownGrouping}
                 >
                   ${allowed ? s.grouping(g) : s.t("grouping.hour_too_long")}
                 </option>`;
@@ -553,9 +575,10 @@ export class EnergyCostStatsCard extends LitElement {
 
   private _bucketLabel(s: Strings, report: ReportDocument, bucket: Bucket): string {
     if (report.grouping === "week") {
+      // Label the whole calendar week, also when the last bucket is cut at the
+      // current hour or the period starts mid-week.
       const start = bucket.start.slice(0, 10);
-      const end = addDays(bucket.end.slice(0, 10), -1);
-      return s.periodLabel({ start, end: end < start ? start : end });
+      return s.periodLabel({ start, end: addDays(start, 6) });
     }
     return s.bucketLabel(bucket.start, report.grouping);
   }

@@ -9,13 +9,14 @@ type Msg = Record<string, unknown>;
 function makeHass(
   respond: (msg: Msg) => Promise<unknown> = async () => report(),
   language = "en",
+  timeZone = "Europe/Moscow",
 ): HassLike & { calls: Msg[] } {
   const calls: Msg[] = [];
   return {
     calls,
     language,
     locale: { language },
-    config: { time_zone: "UTC", currency: "RUB" },
+    config: { time_zone: timeZone, currency: "RUB" },
     callWS: <T>(msg: Msg) => {
       calls.push(msg);
       return respond(msg) as Promise<T>;
@@ -106,8 +107,8 @@ describe("request", () => {
       {
         type: "energy_cost_stats/report",
         start: "2026-11-01",
-        // A period containing today ends at the current hour (HA time zone: UTC).
-        end: "2026-11-06T12:00:00",
+        // A period containing today ends at the current hour (Moscow, UTC+3).
+        end: "2026-11-06T15:00:00+03:00",
         grouping: "day",
       },
     ]);
@@ -118,7 +119,7 @@ describe("request", () => {
     expect(last(hass)).toEqual({
       type: "energy_cost_stats/report",
       start: "2026-11-06",
-      end: "2026-11-06T12:00:00",
+      end: "2026-11-06T15:00:00+03:00",
       grouping: "hour",
       entities: ["sensor.plug_02"],
     });
@@ -135,6 +136,21 @@ describe("request", () => {
   });
 });
 
+describe("time zone", () => {
+  it("asks again in the integration's time zone when it differs from HA's", async () => {
+    const { hass } = await mount({}, makeHass(undefined, "en", "UTC"));
+    expect(hass.calls.map((c) => c.end)).toEqual([
+      "2026-11-06T12:00:00+00:00",
+      "2026-11-06T15:00:00+03:00",
+    ]);
+  });
+
+  it("does not ask again for a past period", async () => {
+    const { hass } = await mount({ period: "last_month" }, makeHass(undefined, "en", "UTC"));
+    expect(hass.calls).toHaveLength(1);
+  });
+});
+
 describe("period picker", () => {
   it("arrows move a month by months; next is disabled on the current month", async () => {
     const { card, hass } = await mount();
@@ -148,8 +164,7 @@ describe("period picker", () => {
     await click(card, "button.next");
     expect(last(hass)).toMatchObject({ start: "2026-10-01", end: "2026-11-01" });
     await click(card, "button.now");
-    // Once a report arrived, its time zone (Europe/Moscow, UTC+3) is used.
-    expect(last(hass)).toMatchObject({ start: "2026-11-01", end: "2026-11-06T15:00:00" });
+    expect(last(hass)).toMatchObject({ start: "2026-11-01", end: "2026-11-06T15:00:00+03:00" });
   });
 
   it("today moves by days and yesterday stays a day", async () => {
@@ -161,10 +176,20 @@ describe("period picker", () => {
     expect(last(hass)).toMatchObject({ start: "2026-11-04", end: "2026-11-05" });
   });
 
+  it("keeps the preset select in sync after a custom range", async () => {
+    const { card } = await mount();
+    await click(card, "button.prev");
+    expect(q<HTMLSelectElement>(card, "select.preset").value).toBe("last_month");
+    await click(card, "button.prev");
+    expect(q<HTMLSelectElement>(card, "select.preset").value).toBe("");
+    await click(card, "button.now");
+    expect(q<HTMLSelectElement>(card, "select.preset").value).toBe("this_month");
+  });
+
   it("presets switch the step: week moves by weeks", async () => {
     const { card, hass } = await mount();
     await choose(card, "select.preset", "this_week");
-    expect(last(hass)).toMatchObject({ start: "2026-11-02", end: "2026-11-06T15:00:00" });
+    expect(last(hass)).toMatchObject({ start: "2026-11-02", end: "2026-11-06T15:00:00+03:00" });
     await click(card, "button.prev");
     expect(last(hass)).toMatchObject({ start: "2026-10-26", end: "2026-11-02" });
     expect(q<HTMLSelectElement>(card, "select.preset").value).toBe("last_week");
@@ -214,8 +239,7 @@ describe("period picker", () => {
     const { card, hass } = await mount();
     await click(card, "button.refresh");
     expect(hass.calls).toHaveLength(2);
-    // Same period; the end now uses the report's time zone (UTC+3) for the current hour.
-    expect(hass.calls[1]).toEqual({ ...hass.calls[0], end: "2026-11-06T15:00:00" });
+    expect(hass.calls[1]).toEqual(hass.calls[0]);
   });
 });
 
@@ -261,6 +285,26 @@ describe("table", () => {
     expect(bucketRows()[1]!.textContent).toContain("35.33");
     await choose(card, "select.breakdown-device", "sensor.plug_02");
     expect(bucketRows()[1]!.textContent).toContain("14.73");
+  });
+
+  it("shows auto when the chosen grouping is not allowed for the period", async () => {
+    const { card, hass } = await mount({
+      show_breakdown: true,
+      grouping: "hour",
+      period: "this_quarter",
+    });
+    expect(last(hass)).toMatchObject({ grouping: "week" });
+    expect(q<HTMLSelectElement>(card, "select.grouping").value).toBe("auto");
+  });
+
+  it("labels week buckets with the whole calendar week", async () => {
+    const doc = report({ grouping: "week" });
+    doc.buckets[1]!.start = "2026-11-02T00:00:00+03:00";
+    doc.buckets[1]!.end = "2026-11-06T15:00:00+03:00";
+    const { card } = await mount({ show_breakdown: true }, makeHass(async () => doc));
+    const label = card.shadowRoot!.querySelectorAll("table.buckets tbody tr th")[1]!.textContent;
+    expect(label).toContain("2");
+    expect(label).toContain("8");
   });
 
   it("changing the grouping re-requests", async () => {

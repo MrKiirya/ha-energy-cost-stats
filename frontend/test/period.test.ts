@@ -214,9 +214,9 @@ describe("requestEnd", () => {
 
   it("a period containing today ends at the current local hour", () => {
     const month = { start: "2026-11-01", end: "2026-11-30" };
-    expect(requestEnd(month, "UTC", now)).toBe("2026-11-06T12:00:00");
-    expect(requestEnd(month, "Europe/Moscow", now)).toBe("2026-11-06T15:00:00");
-    expect(requestEnd(month, "America/New_York", now)).toBe("2026-11-06T07:00:00");
+    expect(requestEnd(month, "UTC", now)).toBe("2026-11-06T12:00:00+00:00");
+    expect(requestEnd(month, "Europe/Moscow", now)).toBe("2026-11-06T15:00:00+03:00");
+    expect(requestEnd(month, "America/New_York", now)).toBe("2026-11-06T07:00:00-05:00");
   });
 
   it("uses the time zone's today", () => {
@@ -226,17 +226,28 @@ describe("requestEnd", () => {
       "2026-11-07",
     );
     expect(requestEnd({ start: "2026-11-07", end: "2026-11-07" }, "Europe/Moscow", late)).toBe(
-      "2026-11-07T01:00:00",
+      "2026-11-07T01:00:00+03:00",
     );
   });
 
   it("never asks for an empty range in the first hour of the period", () => {
     const midnight = new Date("2026-11-06T00:20:00Z");
     expect(requestEnd({ start: "2026-11-06", end: "2026-11-06" }, "UTC", midnight)).toBe(
-      "2026-11-06T01:00:00",
+      "2026-11-06T01:00:00+00:00",
     );
     expect(requestEnd({ start: "2026-11-01", end: "2026-11-30" }, "UTC", midnight)).toBe(
-      "2026-11-06T00:00:00",
+      "2026-11-06T00:00:00+00:00",
+    );
+  });
+
+  it("names the offset of the repeated hour on a DST fall-back day", () => {
+    // Europe/Berlin: 2026-10-25 03:00 CEST -> 02:00 CET, 02:xx happens twice.
+    const day = { start: "2026-10-25", end: "2026-10-25" };
+    expect(requestEnd(day, "Europe/Berlin", new Date("2026-10-25T00:30:00Z"))).toBe(
+      "2026-10-25T02:00:00+02:00",
+    );
+    expect(requestEnd(day, "Europe/Berlin", new Date("2026-10-25T01:30:00Z"))).toBe(
+      "2026-10-25T02:00:00+01:00",
     );
   });
 
