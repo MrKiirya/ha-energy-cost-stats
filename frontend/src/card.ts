@@ -6,6 +6,14 @@
 
 import { LitElement, css, html, nothing, type PropertyValues, type TemplateResult } from "lit";
 import { live } from "lit/directives/live.js";
+import {
+  collectionPeriod,
+  dashboardPath,
+  findEnergyCollection,
+  isValidCollectionKey,
+  pickerTimeZone,
+  type EnergyCollectionLike,
+} from "./energy-period";
 import { Strings, type StringKey } from "./i18n";
 import {
   PRESETS,
@@ -50,7 +58,20 @@ export interface CardConfig {
   grouping?: GroupingChoice;
   /** Show the "by period" table expanded (default false). */
   show_breakdown?: boolean;
+  /**
+   * Where the period comes from: `card` (default) — the card's own picker;
+   * `energy` — Home Assistant's energy date picker (`energy-date-selection` card)
+   * on the same dashboard, falling back to the own picker (with a note) when it
+   * is not there. Opt-in because every HA energy card creates the collection the
+   * picker uses, so its presence does not prove a picker is shown.
+   */
+  period_source?: PeriodSource;
+  /** `collection_key` of the energy date picker to follow (when it sets one). */
+  collection_key?: string;
 }
+
+type PeriodSource = "card" | "energy";
+const PERIOD_SOURCES: PeriodSource[] = ["card", "energy"];
 
 /** While the period contains today, re-fetch this often (new hours get compiled). */
 const REFRESH_MS = 10 * 60 * 1000;
@@ -79,7 +100,12 @@ export class EnergyCostStatsCard extends LitElement {
     _breakdownEntity: { state: true },
   };
 
-  hass?: HassLike;
+  hass?: HassLike & { connection?: unknown; panelUrl?: string };
+  /** HA's energy collection being followed (`period_source: energy`). */
+  private _energy?: EnergyCollectionLike;
+  private _unsubEnergy?: () => void;
+  /** The collection's subscribe() threw: do not retry it on every update. */
+  private _energyBroken?: EnergyCollectionLike;
   private _config?: CardConfig;
   private _period?: Period;
   private _groupingChoice: GroupingChoice = "auto";
@@ -117,7 +143,21 @@ export class EnergyCostStatsCard extends LitElement {
     ) {
       throw new Error("entities must be a list of entity ids");
     }
+    if (config.period_source !== undefined && !PERIOD_SOURCES.includes(config.period_source)) {
+      throw new Error(`Unknown period_source: ${String(config.period_source)}`);
+    }
+    if (
+      config.collection_key !== undefined &&
+      (typeof config.collection_key !== "string" || !isValidCollectionKey(config.collection_key))
+    ) {
+      throw new Error('collection_key must start with "energy_" (as in the energy date picker)');
+    }
     const previous = this._config;
+    if (previous) {
+      // period_source or collection_key may have changed: attach again from scratch.
+      this._detachEnergy();
+      this._energyBroken = undefined;
+    }
     this._config = config;
     this._groupingChoice = config.grouping ?? "auto";
     if (previous && this._period) {
@@ -168,13 +208,67 @@ export class EnergyCostStatsCard extends LitElement {
     super.disconnectedCallback();
     if (this._timer !== undefined) clearInterval(this._timer);
     this._timer = undefined;
+    this._detachEnergy();
   }
 
   protected override willUpdate(changed: PropertyValues): void {
+    if (this.hass && this._config && this.isConnected && !this._energy) {
+      this._attachEnergy();
+    }
     if (this.hass && this._config && !this._period) {
       this._period = presetPeriod(this._config.period ?? "this_month", this._today());
     }
     super.willUpdate(changed);
+  }
+
+  /** True while the period follows HA's energy date picker. */
+  get followsEnergyPicker(): boolean {
+    return this._energy !== undefined;
+  }
+
+  /**
+   * Follow HA's energy date picker when allowed and present. The collection can
+   * appear after this card (the picker card creates it), so this is retried on
+   * every update until found.
+   */
+  private _attachEnergy(): void {
+    if (this._config?.period_source !== "energy") return;
+    const collection = findEnergyCollection(
+      this.hass?.connection,
+      this._config.collection_key,
+      dashboardPath(this.hass?.panelUrl, window.location.pathname),
+    );
+    if (!collection || collection === this._energyBroken) return;
+    this._energy = collection;
+    const follow = (data: { start: Date; end?: Date }) => {
+      const period = collectionPeriod(
+        data,
+        pickerTimeZone(this.hass?.locale, this.hass?.config?.time_zone),
+      );
+      if (!period) return;
+      if (period.start !== this._period?.start || period.end !== this._period?.end) {
+        this._customOpen = false;
+        this._period = period;
+      }
+    };
+    follow(collection);
+    try {
+      this._unsubEnergy = collection.subscribe(follow);
+    } catch {
+      // A changed internal API: fall back to the card's own picker, once.
+      this._energy = undefined;
+      this._energyBroken = collection;
+    }
+  }
+
+  private _detachEnergy(): void {
+    try {
+      this._unsubEnergy?.();
+    } catch {
+      // Ignore: the collection may already be gone.
+    }
+    this._unsubEnergy = undefined;
+    this._energy = undefined;
   }
 
   protected override updated(changed: PropertyValues): void {
@@ -299,7 +393,11 @@ export class EnergyCostStatsCard extends LitElement {
             ? html`<div class="loading" role="status">${s.t("loading")}</div>`
             : nothing}
         </div>
-        ${this._renderPicker(s)}
+        ${this._energy
+          ? this._renderFollowedPeriod(s)
+          : html`${this._config.period_source === "energy"
+              ? html`<div class="note warning">${s.t("energy_picker_missing")}</div>`
+              : nothing}${this._renderPicker(s)}`}
         <div class="content">
           ${this._error
             ? html`<div class="error" role="alert">${this._error}</div>`
@@ -308,6 +406,25 @@ export class EnergyCostStatsCard extends LitElement {
               : nothing}
         </div>
       </ha-card>
+    `;
+  }
+
+  /** Period line when HA's energy date picker drives the period. */
+  private _renderFollowedPeriod(s: Strings): TemplateResult {
+    return html`
+      <div class="picker followed">
+        <span class="label" title=${s.t("energy_picker_followed")}>
+          ${s.periodLabel(this._period!)}
+        </span>
+        <button
+          class="icon refresh"
+          title=${s.t("refresh")}
+          aria-label=${s.t("refresh")}
+          @click=${() => void this._load()}
+        >
+          ${icon(ICON_REFRESH)}
+        </button>
+      </div>
     `;
   }
 
@@ -637,6 +754,12 @@ export class EnergyCostStatsCard extends LitElement {
       align-items: center;
       gap: 8px;
       margin: 4px 0 8px;
+    }
+    .picker.followed {
+      justify-content: space-between;
+    }
+    .picker.followed .label {
+      font-weight: 500;
     }
     .nav {
       display: flex;

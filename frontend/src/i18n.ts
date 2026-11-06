@@ -61,6 +61,9 @@ const EN = {
   "error.unknown_command": "The integration is not loaded (restart Home Assistant after installing).",
   "error.generic": "Could not load the report: {message}",
   coverage: "{measured} measured, {estimated} estimated, {excluded} excluded, {missing} missing of {expected} h",
+  energy_picker_followed: "Period from the Energy date picker on this dashboard",
+  energy_picker_missing:
+    "No Energy date picker on this dashboard: add the \"Energy date selection\" card or set period_source: card.",
 } as const;
 
 export type StringKey = keyof typeof EN;
@@ -125,6 +128,9 @@ const RU: Record<StringKey, string> = {
   "error.generic": "Не удалось загрузить отчёт: {message}",
   coverage:
     "{measured} измерено, {estimated} оценено, {excluded} исключено, {missing} нет из {expected} ч",
+  energy_picker_followed: "Период из выбора периода «Энергия» на этом дашборде",
+  energy_picker_missing:
+    "На дашборде нет выбора периода «Энергия»: добавьте карточку «Выбор даты энергии» или укажите period_source: card.",
 };
 
 export class Strings {
