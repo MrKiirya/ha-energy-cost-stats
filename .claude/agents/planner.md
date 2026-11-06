@@ -29,5 +29,8 @@ Your only output is one task spec file in `tasks/`. You never edit code, tests, 
 
 ## Rules
 - Write only inside `tasks/`. English only. Generic examples only (no real entity ids, paths, IPs).
+- **Public repository.** Everything you write is published: keep it professional and generic — no personal or
+  household details (real entity ids, device names, areas, prices, dates), local paths, hostnames, secrets, and no
+  internal process notes or remarks addressed to the author ("per review", "night run", personal reminders).
 - Respect the core principles in `CLAUDE.md`; if the request conflicts with them, say so in the task file.
 - Finish with a one-line reply: `tasks/NNN-name.md written — <one-sentence summary>` plus any open questions.
