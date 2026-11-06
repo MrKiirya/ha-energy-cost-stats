@@ -11,7 +11,6 @@ from zoneinfo import ZoneInfo
 
 import pytest
 import voluptuous as vol
-from homeassistant.components.energy.data import async_get_manager
 from homeassistant.config_entries import ConfigEntryState, ConfigSubentryData
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
@@ -23,6 +22,7 @@ from custom_components.energy_cost_stats import report_api
 from custom_components.energy_cost_stats.const import DOMAIN
 
 SeedStatistics = Callable[..., Awaitable[None]]
+SetDashboard = Callable[[list[dict[str, Any]]], Awaitable[None]]
 HOUR = timedelta(hours=1)
 PLUG_01 = "sensor.plug_01"
 PLUG_02 = "sensor.plug_02"
@@ -525,18 +525,18 @@ async def test_report_uses_resolved_selection(
 
 
 async def test_report_nested_totals(
-    hass: HomeAssistant, hass_ws_client, seed_statistics: SeedStatistics
+    hass: HomeAssistant,
+    hass_ws_client,
+    seed_statistics: SeedStatistics,
+    set_dashboard: SetDashboard,
 ):
     await seed_statistics(PLUG_01, ramp(1.0))
     await seed_statistics(PLUG_02, ramp(2.0))
-    manager = await async_get_manager(hass)
-    await manager.async_update(
-        {
-            "device_consumption": [
-                {"stat_consumption": PLUG_01},
-                {"stat_consumption": PLUG_02, "included_in_stat": PLUG_01},
-            ]
-        }
+    await set_dashboard(
+        [
+            {"stat_consumption": PLUG_01},
+            {"stat_consumption": PLUG_02, "included_in_stat": PLUG_01},
+        ]
     )
     dashboard = {"mode": "energy_dashboard", "exclude": {}, "overrides": {}}
     await setup_entry(hass, opts=options(sensors=dashboard))
@@ -564,18 +564,16 @@ async def test_nested_child_counts_when_upstream_unreadable(
     seed_statistics: SeedStatistics,
     unit: str,
     seed_parent: bool,
+    set_dashboard: SetDashboard,
 ):
     await seed_statistics(PLUG_02, ramp(2.0))
     if seed_parent:
         await seed_statistics(PLUG_01, ramp(1.0), unit=unit)
-    manager = await async_get_manager(hass)
-    await manager.async_update(
-        {
-            "device_consumption": [
-                {"stat_consumption": PLUG_01},
-                {"stat_consumption": PLUG_02, "included_in_stat": PLUG_01},
-            ]
-        }
+    await set_dashboard(
+        [
+            {"stat_consumption": PLUG_01},
+            {"stat_consumption": PLUG_02, "included_in_stat": PLUG_01},
+        ]
     )
     dashboard = {"mode": "energy_dashboard", "exclude": {}, "overrides": {}}
     await setup_entry(hass, opts=options(sensors=dashboard))

@@ -6,7 +6,6 @@ from typing import Any
 
 import pytest
 import voluptuous as vol
-from homeassistant.components.energy.data import async_get_manager
 from homeassistant.config_entries import (
     SOURCE_USER,
     ConfigEntryState,
@@ -20,6 +19,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry
 from custom_components.energy_cost_stats import report_api
 from custom_components.energy_cost_stats.const import DEFAULT_TITLE, DOMAIN
 
+SetDashboard = Callable[[list[dict[str, Any]]], Awaitable[None]]
 PLUG_01 = "sensor.plug_01"
 PLUG_02 = "sensor.plug_02"
 
@@ -392,9 +392,10 @@ async def test_options_flow_device_limits_keeps_applied_and_compare(
     assert entry.options["compare"] == TARIFF_OPTIONS["compare"]
 
 
-async def test_user_flow_defaults_to_energy_dashboard(hass: HomeAssistant):
-    manager = await async_get_manager(hass)
-    await manager.async_update({"device_consumption": [{"stat_consumption": PLUG_01}]})
+async def test_user_flow_defaults_to_energy_dashboard(
+    hass: HomeAssistant, set_dashboard: SetDashboard
+):
+    await set_dashboard([{"stat_consumption": PLUG_01}])
     result = await _call(
         hass.config_entries.flow.async_init, DOMAIN, context={"source": SOURCE_USER}
     )

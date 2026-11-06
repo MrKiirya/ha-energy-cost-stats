@@ -4,7 +4,6 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from homeassistant.components.energy.data import async_get_manager
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import area_registry as ar
 from homeassistant.helpers import device_registry as dr
@@ -22,13 +21,9 @@ from custom_components.energy_cost_stats.engine.sensors import (
 )
 
 SeedStatistics = Callable[..., Awaitable[None]]
+SetDashboard = Callable[[list[dict[str, Any]]], Awaitable[None]]
 START = datetime(2026, 1, 15, tzinfo=UTC)
 SUMS = {START: 1.0, START + timedelta(hours=1): 2.0}
-
-
-async def set_dashboard(hass: HomeAssistant, devices: list[dict[str, Any]]) -> None:
-    manager = await async_get_manager(hass)
-    await manager.async_update({"device_consumption": devices})
 
 
 def register(
@@ -48,10 +43,11 @@ def register(
     )
 
 
-async def test_dashboard_devices(hass: HomeAssistant) -> None:
+async def test_dashboard_devices(
+    hass: HomeAssistant, set_dashboard: SetDashboard
+) -> None:
     assert await sensor_resolver.async_dashboard_devices(hass) == ()
     await set_dashboard(
-        hass,
         [
             {"stat_consumption": "sensor.a_energy"},
             {
@@ -66,7 +62,9 @@ async def test_dashboard_devices(hass: HomeAssistant) -> None:
     )
 
 
-async def test_default_settings(hass: HomeAssistant) -> None:
+async def test_default_settings(
+    hass: HomeAssistant, set_dashboard: SetDashboard
+) -> None:
     without = await sensor_resolver.async_default_sensor_settings(hass)
     assert without == {
         "mode": "filter",
@@ -74,7 +72,7 @@ async def test_default_settings(hass: HomeAssistant) -> None:
         "exclude": {},
         "overrides": {},
     }
-    await set_dashboard(hass, [{"stat_consumption": "sensor.a_energy"}])
+    await set_dashboard([{"stat_consumption": "sensor.a_energy"}])
     with_devices = await sensor_resolver.async_default_sensor_settings(hass)
     assert with_devices == {"mode": "energy_dashboard", "exclude": {}, "overrides": {}}
 
@@ -176,10 +174,9 @@ async def test_new_sensor_picked_up_dynamically(
 
 
 async def test_resolve_dashboard_mode_with_parents(
-    hass: HomeAssistant, seed_statistics: SeedStatistics
+    hass: HomeAssistant, seed_statistics: SeedStatistics, set_dashboard: SetDashboard
 ) -> None:
     await set_dashboard(
-        hass,
         [
             {
                 "stat_consumption": "sensor.b_energy",

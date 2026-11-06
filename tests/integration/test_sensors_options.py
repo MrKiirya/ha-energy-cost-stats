@@ -5,7 +5,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
-from homeassistant.components.energy.data import async_get_manager
 from homeassistant.config_entries import ConfigEntryState, ConfigSubentryData
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
@@ -17,6 +16,7 @@ from custom_components.energy_cost_stats import config_flow
 from custom_components.energy_cost_stats.const import DEFAULT_TITLE, DOMAIN
 
 SeedStatistics = Callable[..., Awaitable[None]]
+SetDashboard = Callable[[list[dict[str, Any]]], Awaitable[None]]
 PLUG_01 = "sensor.plug_01"
 PLUG_02 = "sensor.plug_02"
 START = datetime(2026, 1, 15, tzinfo=UTC)
@@ -165,15 +165,16 @@ async def test_sensors_menu_shows_count_and_list(
     ]
 
 
-async def test_sensors_menu_nested_and_capped(hass: HomeAssistant) -> None:
+async def test_sensors_menu_nested_and_capped(
+    hass: HomeAssistant, set_dashboard: SetDashboard
+) -> None:
     ids = [f"sensor.meter_{i:02d}_energy" for i in range(32)]
-    manager = await async_get_manager(hass)
     devices: list[dict[str, Any]] = [{"stat_consumption": ids[0]}]
     devices += [
         {"stat_consumption": entity_id, "included_in_stat": ids[0]}
         for entity_id in ids[1:]
     ]
-    await manager.async_update({"device_consumption": devices})
+    await set_dashboard(devices)
     entry = await add_entry(hass, DASHBOARD)
     result = await open_menu(hass, entry)
     placeholders = result["description_placeholders"]
@@ -258,9 +259,10 @@ async def test_preview_back_to_edit_prefills_candidate(
     assert entry.options["sensors"]["include"] == "all"
 
 
-async def test_select_energy_dashboard_mode(hass: HomeAssistant) -> None:
-    manager = await async_get_manager(hass)
-    await manager.async_update({"device_consumption": [{"stat_consumption": PLUG_01}]})
+async def test_select_energy_dashboard_mode(
+    hass: HomeAssistant, set_dashboard: SetDashboard
+) -> None:
+    await set_dashboard([{"stat_consumption": PLUG_01}])
     entry = await add_entry(
         hass,
         {
