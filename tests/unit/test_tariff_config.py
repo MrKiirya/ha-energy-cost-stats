@@ -8,6 +8,9 @@ import pytest
 from engine.tariff import TariffValidationError
 from engine.tariff_config import (
     AppliedChange,
+    AppliedValidationError,
+    Tariff,
+    check_applied,
     comparison_schedule,
     config_from_data,
     default_compare,
@@ -427,3 +430,68 @@ def test_comparison_schedule_and_default_compare():
 
 def test_compare_defaults_when_absent():
     assert config_from_data(doc()).compare == ("three_zone", "single")
+
+
+# ---- check_applied (tasks/019) ---------------------------------------------------
+
+
+def _tariffs():
+    config = config_from_data(doc(applied=[]))
+    return config.tariffs
+
+
+def test_check_applied_sorts_valid_history():
+    tariffs = _tariffs()
+    history = [
+        AppliedChange(date(2026, 8, 1), "single"),
+        AppliedChange(date(2026, 7, 1), "three_zone"),
+    ]
+    result = check_applied(tariffs, history)
+    assert [c.from_date for c in result] == [date(2026, 7, 1), date(2026, 8, 1)]
+
+
+def test_check_applied_duplicate_from():
+    first = AppliedChange(date(2026, 7, 1), "three_zone")
+    second = AppliedChange(date(2026, 7, 1), "single")
+    with pytest.raises(AppliedValidationError) as err:
+        check_applied(_tariffs(), [first, second])
+    assert err.value.code == "duplicate_from"
+    assert err.value.change == second
+
+
+def test_check_applied_no_version_on_date():
+    change = AppliedChange(date(2026, 6, 1), "three_zone")
+    with pytest.raises(AppliedValidationError) as err:
+        check_applied(_tariffs(), [change])
+    assert err.value.code == "no_version"
+    assert err.value.change == change
+    assert err.value.first_valid_from == date(2026, 7, 1)
+
+
+def test_check_applied_unknown_tariff():
+    change = AppliedChange(date(2026, 7, 1), "nope")
+    with pytest.raises(AppliedValidationError) as err:
+        check_applied(_tariffs(), [change])
+    assert err.value.code == "unknown_tariff"
+    assert err.value.change == change
+
+
+def test_check_applied_accepts_empty_history():
+    assert check_applied(_tariffs(), []) == ()
+
+
+def test_config_from_data_raises_applied_error_subclass():
+    with pytest.raises(AppliedValidationError) as err:
+        config_from_data(doc(applied=[{"from": "2026-06-01", "tariff": "three_zone"}]))
+    assert isinstance(err.value, TariffValidationError)
+    assert "no version" in str(err.value)
+    assert isinstance(_tariffs()[0], Tariff)
+
+
+def test_config_from_data_unknown_applied_tariff_has_code():
+    with pytest.raises(AppliedValidationError) as err:
+        config_from_data(doc(applied=[{"from": "2026-07-01", "tariff": "nope"}]))
+    assert err.value.code == "unknown_tariff"
+    with pytest.raises(AppliedValidationError) as err:
+        config_from_data(doc(applied="nope"))
+    assert err.value.code == "unknown_tariff"

@@ -66,6 +66,19 @@ async def _add_entry(
     return entry
 
 
+async def _options_step(
+    hass: HomeAssistant, entry: MockConfigEntry, step: str
+) -> dict[str, Any]:
+    """Open the options menu and choose ``step``."""
+    result = await _call(hass.config_entries.options.async_init, entry.entry_id)
+    assert result["type"] is FlowResultType.MENU
+    return await _call(
+        hass.config_entries.options.async_configure,
+        result["flow_id"],
+        {"next_step_id": step},
+    )
+
+
 def _markers(schema: vol.Schema) -> dict[str, Any]:
     return {str(key): key for key in schema.schema}
 
@@ -187,19 +200,13 @@ async def test_options_select_entities_and_reload(hass: HomeAssistant):
     entry = await _add_entry(hass, {**EXAMPLE_OPTIONS, "entities": []})
     assert entry.runtime_data.settings.entities == ()
 
-    result = await _call(hass.config_entries.options.async_init, entry.entry_id)
+    result = await _options_step(hass, entry, "sensors")
     assert result["type"] is FlowResultType.FORM
-    assert result["step_id"] == "init"
+    assert result["step_id"] == "sensors"
     result = await _call(
         hass.config_entries.options.async_configure,
         result["flow_id"],
-        {
-            "time_zone": "Europe/Berlin",
-            "spike_check": True,
-            "spike_limit": 4,
-            "entities": [PLUG_01, PLUG_02],
-            "edit_device_limits": False,
-        },
+        _sensors_input(),
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["entities"] == [PLUG_01, PLUG_02]
@@ -208,15 +215,20 @@ async def test_options_select_entities_and_reload(hass: HomeAssistant):
     assert entry.runtime_data.settings.entities == (PLUG_01, PLUG_02)
 
 
-async def test_options_init_prefills_current_values(hass: HomeAssistant):
+async def test_options_sensors_prefills_current_values(hass: HomeAssistant):
     _register_sensors(hass)
     entry = await _add_entry(hass)
-    result = await _call(hass.config_entries.options.async_init, entry.entry_id)
+    result = await _options_step(hass, entry, "sensors")
+    assert _suggested(result["data_schema"])["entities"] == [PLUG_01, PLUG_02]
+
+
+async def test_options_general_prefills_current_values(hass: HomeAssistant):
+    entry = await _add_entry(hass)
+    result = await _options_step(hass, entry, "general")
     suggested = _suggested(result["data_schema"])
     assert suggested["time_zone"] == "Europe/Berlin"
     assert suggested["spike_check"] is True
     assert suggested["spike_limit"] == 4
-    assert suggested["entities"] == [PLUG_01, PLUG_02]
 
 
 async def test_options_rejects_non_energy_entity(hass: HomeAssistant):
@@ -224,14 +236,8 @@ async def test_options_rejects_non_energy_entity(hass: HomeAssistant):
     entry = await _add_entry(
         hass, {**EXAMPLE_OPTIONS, "entities": [], "device_spike_limits": {}}
     )
-    user_input = {
-        "time_zone": "Europe/Berlin",
-        "spike_check": True,
-        "spike_limit": 4,
-        "entities": ["sensor.power_01"],
-        "edit_device_limits": False,
-    }
-    result = await _call(hass.config_entries.options.async_init, entry.entry_id)
+    user_input = _sensors_input(entities=["sensor.power_01"])
+    result = await _options_step(hass, entry, "sensors")
     result = await _call(
         hass.config_entries.options.async_configure, result["flow_id"], user_input
     )
@@ -254,17 +260,20 @@ async def test_options_keeps_missing_previous_entity(hass: HomeAssistant):
         hass,
         {**EXAMPLE_OPTIONS, "entities": ["sensor.plug_old"], "device_spike_limits": {}},
     )
-    result = await _call(hass.config_entries.options.async_init, entry.entry_id)
+    result = await _options_step(hass, entry, "sensors")
     result = await _call(
         hass.config_entries.options.async_configure,
         result["flow_id"],
-        {
-            "time_zone": "UTC",
-            "spike_check": True,
-            "spike_limit": 5,
-            "entities": ["sensor.plug_old"],
-            "edit_device_limits": False,
-        },
+        _sensors_input(entities=["sensor.plug_old"]),
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["entities"] == ["sensor.plug_old"]
+    await hass.async_block_till_done()
+    result = await _options_step(hass, entry, "general")
+    result = await _call(
+        hass.config_entries.options.async_configure,
+        result["flow_id"],
+        _general_input(time_zone="UTC", spike_limit=5),
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["entities"] == ["sensor.plug_old"]
@@ -277,17 +286,11 @@ async def test_options_device_limits(hass: HomeAssistant):
     entry = await _add_entry(
         hass, {**EXAMPLE_OPTIONS, "entities": [], "device_spike_limits": {}}
     )
-    result = await _call(hass.config_entries.options.async_init, entry.entry_id)
+    result = await _options_step(hass, entry, "sensors")
     result = await _call(
         hass.config_entries.options.async_configure,
         result["flow_id"],
-        {
-            "time_zone": "Europe/Berlin",
-            "spike_check": True,
-            "spike_limit": 4,
-            "entities": [PLUG_01, PLUG_02],
-            "edit_device_limits": True,
-        },
+        _sensors_input(edit_device_limits=True),
     )
     assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "device_limits"
@@ -305,17 +308,11 @@ async def test_options_device_limits(hass: HomeAssistant):
     await hass.async_block_till_done()
 
     # Reopen: suggested values reflect the stored overrides (null shown as 0).
-    result = await _call(hass.config_entries.options.async_init, entry.entry_id)
+    result = await _options_step(hass, entry, "sensors")
     result = await _call(
         hass.config_entries.options.async_configure,
         result["flow_id"],
-        {
-            "time_zone": "Europe/Berlin",
-            "spike_check": True,
-            "spike_limit": 4,
-            "entities": [PLUG_01, PLUG_02],
-            "edit_device_limits": True,
-        },
+        _sensors_input(edit_device_limits=True),
     )
     assert _suggested(result["data_schema"]) == {PLUG_01: 10, PLUG_02: 0}
 
@@ -329,17 +326,11 @@ async def test_options_device_limits(hass: HomeAssistant):
 async def test_options_drops_overrides_of_deselected(hass: HomeAssistant):
     _register_sensors(hass)
     entry = await _add_entry(hass)
-    result = await _call(hass.config_entries.options.async_init, entry.entry_id)
+    result = await _options_step(hass, entry, "sensors")
     result = await _call(
         hass.config_entries.options.async_configure,
         result["flow_id"],
-        {
-            "time_zone": "Europe/Berlin",
-            "spike_check": True,
-            "spike_limit": 4,
-            "entities": [PLUG_01],
-            "edit_device_limits": False,
-        },
+        _sensors_input(entities=[PLUG_01]),
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["device_spike_limits"] == {PLUG_01: "10"}
@@ -348,13 +339,20 @@ async def test_options_drops_overrides_of_deselected(hass: HomeAssistant):
 BAD_LIMITS = [float("nan"), float("inf"), "nan", "inf"]
 
 
-def _init_input(**changes: Any) -> dict[str, Any]:
+def _sensors_input(**changes: Any) -> dict[str, Any]:
+    return {
+        "entities": [PLUG_01, PLUG_02],
+        "edit_device_limits": False,
+        **changes,
+    }
+
+
+def _general_input(**changes: Any) -> dict[str, Any]:
     return {
         "time_zone": "Europe/Berlin",
         "spike_check": True,
         "spike_limit": 4,
-        "entities": [PLUG_01, PLUG_02],
-        "edit_device_limits": False,
+        "sidebar": {},
         **changes,
     }
 
@@ -379,12 +377,12 @@ async def test_options_rejects_invalid_global_limit(hass: HomeAssistant, bad: An
     _register_sensors(hass)
     entry = await _add_entry(hass)
     before = dict(entry.options)
-    result = await _call(hass.config_entries.options.async_init, entry.entry_id)
+    result = await _options_step(hass, entry, "general")
     try:
         result = await _call(
             hass.config_entries.options.async_configure,
             result["flow_id"],
-            _init_input(spike_limit=bad),
+            _general_input(spike_limit=bad),
         )
     except InvalidData:
         return  # the selector itself rejected it (e.g. 0 < min)
@@ -398,11 +396,11 @@ async def test_options_rejects_non_finite_device_limit(hass: HomeAssistant, bad:
     _register_sensors(hass)
     entry = await _add_entry(hass)
     before = dict(entry.options)
-    result = await _call(hass.config_entries.options.async_init, entry.entry_id)
+    result = await _options_step(hass, entry, "sensors")
     result = await _call(
         hass.config_entries.options.async_configure,
         result["flow_id"],
-        _init_input(edit_device_limits=True),
+        _sensors_input(edit_device_limits=True),
     )
     result = await _call(
         hass.config_entries.options.async_configure,
@@ -418,8 +416,8 @@ async def test_options_rejects_non_finite_device_limit(hass: HomeAssistant, bad:
 async def test_options_spike_limit_optional_when_check_off(hass: HomeAssistant):
     _register_sensors(hass)
     entry = await _add_entry(hass)
-    result = await _call(hass.config_entries.options.async_init, entry.entry_id)
-    user_input = _init_input(spike_check=False)
+    result = await _options_step(hass, entry, "general")
+    user_input = _general_input(spike_check=False)
     del user_input["spike_limit"]
     result = await _call(
         hass.config_entries.options.async_configure, result["flow_id"], user_input
@@ -446,11 +444,11 @@ async def test_options_device_limits_without_entities_saves_directly(
     entry = await _add_entry(
         hass, {**EXAMPLE_OPTIONS, "entities": [], "device_spike_limits": {}}
     )
-    result = await _call(hass.config_entries.options.async_init, entry.entry_id)
+    result = await _options_step(hass, entry, "sensors")
     result = await _call(
         hass.config_entries.options.async_configure,
         result["flow_id"],
-        _init_input(entities=[], edit_device_limits=True),
+        _sensors_input(entities=[], edit_device_limits=True),
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
 
@@ -501,11 +499,11 @@ async def _add_tariff_entry(hass: HomeAssistant) -> MockConfigEntry:
 async def test_options_flow_keeps_applied_and_compare(hass: HomeAssistant):
     _register_sensors(hass)
     entry = await _add_tariff_entry(hass)
-    result = await _call(hass.config_entries.options.async_init, entry.entry_id)
+    result = await _options_step(hass, entry, "general")
     result = await _call(
         hass.config_entries.options.async_configure,
         result["flow_id"],
-        _init_input(spike_limit=5),
+        _general_input(spike_limit=5),
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["spike_limit"] == "5"
@@ -518,11 +516,11 @@ async def test_options_flow_device_limits_keeps_applied_and_compare(
 ):
     _register_sensors(hass)
     entry = await _add_tariff_entry(hass)
-    result = await _call(hass.config_entries.options.async_init, entry.entry_id)
+    result = await _options_step(hass, entry, "sensors")
     result = await _call(
         hass.config_entries.options.async_configure,
         result["flow_id"],
-        _init_input(edit_device_limits=True),
+        _sensors_input(edit_device_limits=True),
     )
     assert result["step_id"] == "device_limits"
     result = await _call(
