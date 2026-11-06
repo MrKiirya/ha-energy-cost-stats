@@ -1,6 +1,6 @@
 # 016 — Follow Home Assistant's energy date picker
 
-Status: in-review (proposal from the night run; round 1: 3 required — fixed)
+Status: in-review (proposal from the night run; round 1: 3 required — fixed; round 2: APPROVE)
 Roadmap: stage 4 (card)
 Spec sections: SPEC §4.1
 
@@ -28,11 +28,11 @@ keeps its own picker.
 ## Tests to write first
 | Level | Test | Asserts |
 |---|---|---|
-| card | `energy-period.test.ts` | key lookup (`collection_key`, `energy_<dashboard>`), shape check; dates from bounds in another zone (UTC+5 / UTC−5 browser vs Moscow report); open end = today; invalid ranges ignored; card follows the picker and its changes; own picker hidden; `collection_key`; `period_source: card` ignores it; fallback + note for `energy`; late-appearing collection; unsubscribe on removal; config validation |
+| card | `energy-period.test.ts` | key lookup (`collection_key`, `energy_<dashboard>` from `hass.panelUrl` or the path), `energy_` prefix; dates read in the zone HA used (profile `server`/`local`, incl. zones ≥ 12 h apart); open end = today; invalid ranges ignored; with `period_source: energy` the card follows the picker and its changes, hides its own picker, honours `collection_key`, attaches late, unsubscribes on removal, re-attaches after config edits, does not retry a throwing `subscribe()`; default `card` ignores an existing collection; note + own picker when the picker is missing; config validation |
 
 ## Acceptance criteria
 - [x] vitest 116 passed, tsc clean, bundle up to date.
-- [x] Dev HA 2026.9: `vertical-stack` [`energy-date-selection`, cost card]: the card shows the picker's day; HA's
+- [x] Dev HA 2026.9: `vertical-stack` [`energy-date-selection`, cost card with `period_source: energy`]: the card shows the picker's day; HA's
       "previous" arrow moves both (Playwright screenshots).
 - [ ] CI green on the PR.
 

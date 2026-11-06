@@ -110,7 +110,7 @@ export class EnergyCostStatsCard extends LitElement {
   };
 
   hass?: HassLike & { connection?: unknown; panelUrl?: string };
-  /** HA's energy collection being followed (period_source auto/energy). */
+  /** HA's energy collection being followed (`period_source: energy`). */
   private _energy?: EnergyCollectionLike;
   private _unsubEnergy?: () => void;
   /** The collection's subscribe() threw: do not retry it on every update. */
