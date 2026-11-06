@@ -28,6 +28,23 @@ SUBENTRY_TYPE_TARIFF: Final = "tariff"
 SUBENTRY_TYPE_TARIFF_PLAN: Final = "tariff_plan"
 MIGRATED_TARIFF_ID: Final = "main"
 
+# Tariff forms (tariff_flow.py): bases offered when adding a tariff and form-only keys.
+BASE_SINGLE_RATE: Final = "single_rate"
+BASE_TWO_ZONE: Final = "ru_two_zone"
+BASE_THREE_ZONE: Final = "ru_three_zone"
+BASE_CUSTOM: Final = "custom"
+BASE_COPY: Final = "copy"
+MAX_ZONES: Final = 6
+CONF_TARIFF_ID: Final = "id"
+CONF_TARIFF_NAME: Final = "name"
+CONF_BASE: Final = "base"
+CONF_SOURCE: Final = "source"
+CONF_COUNT: Final = "count"
+CONF_VALID_FROM: Final = "valid_from"
+CONF_VERSION: Final = "version"
+CONF_DELETE: Final = "delete"
+SECTION_HOURS: Final = "hours"
+
 # Report API (docs/SPEC.md §2): websocket command, service, request fields, errors.
 SERVICE_GET_REPORT: Final = "get_report"
 WS_TYPE_REPORT: Final = "energy_cost_stats/report"
