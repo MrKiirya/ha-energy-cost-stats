@@ -5,7 +5,11 @@ from typing import Any
 
 import pytest
 import voluptuous as vol
-from homeassistant.config_entries import SOURCE_USER, ConfigEntryState
+from homeassistant.config_entries import (
+    SOURCE_USER,
+    ConfigEntryState,
+    ConfigSubentryData,
+)
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType, InvalidData
 from homeassistant.helpers import entity_registry as er
@@ -449,3 +453,82 @@ async def test_options_device_limits_without_entities_saves_directly(
         _init_input(entities=[], edit_device_limits=True),
     )
     assert result["type"] is FlowResultType.CREATE_ENTRY
+
+
+TARIFF_OPTIONS: dict[str, Any] = {
+    "applied": [{"from": "2026-01-01", "tariff": "main"}],
+    "compare": ["other"],
+}
+TARIFFS = [
+    {
+        "id": tariff_id,
+        "name": tariff_id.title(),
+        "versions": [
+            {
+                "valid_from": "2026-01-01",
+                "preset": "single_rate",
+                "prices": {"t0": "7.40"},
+            }
+        ],
+    }
+    for tariff_id in ("main", "other")
+]
+
+
+async def _add_tariff_entry(hass: HomeAssistant) -> MockConfigEntry:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        title=DEFAULT_TITLE,
+        data={},
+        options={**EXAMPLE_OPTIONS, **TARIFF_OPTIONS},
+        version=2,
+        subentries_data=[
+            ConfigSubentryData(
+                data=data,
+                subentry_type="tariff",
+                title=data["name"],
+                unique_id=data["id"],
+            )
+            for data in TARIFFS
+        ],
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    return entry
+
+
+async def test_options_flow_keeps_applied_and_compare(hass: HomeAssistant):
+    _register_sensors(hass)
+    entry = await _add_tariff_entry(hass)
+    result = await _call(hass.config_entries.options.async_init, entry.entry_id)
+    result = await _call(
+        hass.config_entries.options.async_configure,
+        result["flow_id"],
+        _init_input(spike_limit=5),
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["spike_limit"] == "5"
+    assert entry.options["applied"] == TARIFF_OPTIONS["applied"]
+    assert entry.options["compare"] == TARIFF_OPTIONS["compare"]
+
+
+async def test_options_flow_device_limits_keeps_applied_and_compare(
+    hass: HomeAssistant,
+):
+    _register_sensors(hass)
+    entry = await _add_tariff_entry(hass)
+    result = await _call(hass.config_entries.options.async_init, entry.entry_id)
+    result = await _call(
+        hass.config_entries.options.async_configure,
+        result["flow_id"],
+        _init_input(edit_device_limits=True),
+    )
+    assert result["step_id"] == "device_limits"
+    result = await _call(
+        hass.config_entries.options.async_configure, result["flow_id"], {PLUG_01: 7}
+    )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["device_spike_limits"] == {PLUG_01: "7"}
+    assert entry.options["applied"] == TARIFF_OPTIONS["applied"]
+    assert entry.options["compare"] == TARIFF_OPTIONS["compare"]

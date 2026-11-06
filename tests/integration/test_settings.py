@@ -92,3 +92,58 @@ def test_device_limits_read_only():
         settings.device_spike_limits["sensor.plug_01"] = Decimal("1")  # type: ignore[index]
     with pytest.raises(FrozenInstanceError):
         settings.time_zone = "UTC"  # type: ignore[misc]
+
+
+APPLIED = [
+    {"from": "2026-01-01", "tariff": "two_zone"},
+    {"from": "2026-07-01", "tariff": "single"},
+]
+
+
+def test_applied_and_compare_roundtrip():
+    options = _with(applied=APPLIED, compare=["three_zone"])
+    settings = settings_from_options(options)
+    assert settings.applied == (
+        ("2026-01-01", "two_zone"),
+        ("2026-07-01", "single"),
+    )
+    assert settings.compare == ("three_zone",)
+    assert settings_to_options(settings) == options
+
+
+def test_applied_and_compare_absent_when_unset():
+    settings = settings_from_options(EXAMPLE)
+    assert settings.applied == ()
+    assert settings.compare is None
+    written = settings_to_options(settings)
+    assert "applied" not in written
+    assert "compare" not in written
+
+
+def test_empty_compare_list_is_kept():
+    settings = settings_from_options(_with(compare=[]))
+    assert settings.compare == ()
+    assert settings_to_options(settings)["compare"] == []
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "two_zone",
+        {"from": "2026-01-01", "tariff": "a"},
+        ["two_zone"],
+        [{"from": "2026-01-01"}],
+        [{"from": "2026-01-01", "tariff": "a", "extra": 1}],
+        [{"from": 20260101, "tariff": "a"}],
+        [{"from": "2026-01-01", "tariff": None}],
+    ],
+)
+def test_rejects_malformed_applied(bad: Any):
+    with pytest.raises(SettingsError, match="applied"):
+        settings_from_options(_with(applied=bad))
+
+
+@pytest.mark.parametrize("bad", ["single", ["single", 5], {"a": "b"}])
+def test_rejects_malformed_compare(bad: Any):
+    with pytest.raises(SettingsError, match="compare"):
+        settings_from_options(_with(compare=bad))

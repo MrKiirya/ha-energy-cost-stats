@@ -32,22 +32,15 @@ STRINGS = json.loads(
     ).read_text(encoding="utf-8")
 )
 
-PLAN: dict[str, Any] = {
-    "valid_from": "2026-01-01",
+TARIFF: dict[str, Any] = {
+    "id": "two_zone",
     "name": "Two-zone",
-    "zones": [
+    "versions": [
         {
-            "key": "t1",
-            "name": "Day",
-            "price": "10.30",
-            "periods": [["07:00", "23:00"]],
-        },
-        {
-            "key": "t2",
-            "name": "Night",
-            "price": "4.43",
-            "periods": [["23:00", "07:00"]],
-        },
+            "valid_from": "2026-01-01",
+            "preset": "ru_two_zone",
+            "prices": {"t1": "10.30", "t2": "4.43"},
+        }
     ],
 }
 DAY = {"start": "2026-01-15", "end": "2026-01-16", "grouping": "day"}
@@ -63,12 +56,12 @@ def options(**changes: Any) -> dict[str, Any]:
     return {**base, **changes}
 
 
-def plan_subentry(data: dict[str, Any] = PLAN) -> ConfigSubentryData:
+def tariff_subentry(data: dict[str, Any] = TARIFF) -> ConfigSubentryData:
     return ConfigSubentryData(
         data=data,
-        subentry_type="tariff_plan",
-        title=f"{data['valid_from']} · {data['name']}",
-        unique_id=data["valid_from"],
+        subentry_type="tariff",
+        title=data["name"],
+        unique_id=data["id"],
     )
 
 
@@ -78,11 +71,15 @@ async def setup_entry(
     opts: dict[str, Any] | None = None,
     plans: bool = True,
 ) -> MockConfigEntry:
+    base = opts or options()
+    if plans:
+        base = {"applied": [{"from": "2026-01-01", "tariff": "two_zone"}], **base}
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={},
-        options=opts or options(),
-        subentries_data=[plan_subentry()] if plans else [],
+        options=base,
+        version=2,
+        subentries_data=[tariff_subentry()] if plans else [],
     )
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -274,6 +271,7 @@ def test_all_error_codes_translated():
         "invalid_period",
         "period_too_long",
         "unknown_entity",
+        "unknown_tariff",
     }
     service = STRINGS["services"]["get_report"]
     assert {"name", "description"} <= set(service)
@@ -356,8 +354,10 @@ async def test_retroactive_reprice(hass: HomeAssistant, hass_ws_client):
     assert device_row(before["buckets"][0], PLUG_01)["cost"] == "200.24"
     subentry = next(iter(entry.subentries.values()))
     repriced = {
-        **PLAN,
-        "zones": [{**PLAN["zones"][0], "price": "11.00"}, PLAN["zones"][1]],
+        **TARIFF,
+        "versions": [
+            {**TARIFF["versions"][0], "prices": {"t1": "11.00", "t2": "4.43"}}
+        ],
     }
     hass.config_entries.async_update_subentry(entry, subentry, data=repriced)
     await hass.async_block_till_done()
