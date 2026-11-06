@@ -105,7 +105,8 @@ energy_cost_stats:
   "upstream device" (`included_in_stat`) to avoid double counting. It is the default at first setup when the
   Energy dashboard has individual devices; otherwise the default is `filter` with `include: all`.
 - `mode: filter`: `include` is `all` or a target (`entity_id`, `device_id`, `area_id`, `floor_id`, `label_id`, as
-  resolved by Home Assistant's target helpers) plus `entity_globs`; `exclude` has the same keys and wins.
+  resolved from the entity, device and area registries; hidden and categorized entities are not skipped) plus
+  `entity_globs`; `exclude` has the same keys and wins.
   Matching is dynamic: a new eligible sensor is picked up without editing the configuration.
 - `overrides` holds per-sensor parameters (currently `spike_limit`), independent of how sensors are selected.
 

@@ -19,7 +19,8 @@ three-zone residential tariffs.
   the recorder statistics API (see §6). It returns one engine `DeviceSeries` per statistic id (hourly kWh
   `change`, with neighbour keys, see §5) plus a per-id status (`ok` / `no_statistics` / `unsupported`).
 - Integration layer:
-  - config flow (setup) + options flow (select energy entities, multi-select, `device_class: energy`);
+  - config flow (setup) + options flow (sensor selection by Energy dashboard devices or include / exclude rules,
+    previewed before saving);
   - tariffs stored as **config subentries** (one per tariff, §3); the applied history and the comparison list live
     in `entry.options`;
   - websocket command `energy_cost_stats/report` (period, grouping, entities) → aggregated table;
@@ -29,8 +30,8 @@ three-zone residential tariffs.
   - `report` and `get_report` are registered once in `async_setup` and take the same fields: `start` and `end`
     (required; a local date `YYYY-MM-DD` = local midnight, or an ISO datetime; a datetime without offset is read in
     the settings time zone and must fall on a whole UTC hour; `end` is **exclusive**), `grouping` (`hour` / `day` /
-    `week` / `month` / `total`) and optional `entities` (omitted or empty = all configured sensors; otherwise a
-    subset of the configured ones, in the order given, duplicates dropped). There is no time-zone field: the time
+    `week` / `month` / `total`) and optional `entities` (omitted or empty = all selected sensors, see below; otherwise a
+    subset of the selected ones, in the order given, duplicates dropped). There is no time-zone field: the time
     zone comes from the settings. A date bound in a time zone with a non-whole-hour offset is rounded up to the
     first UTC hour starting on or after local midnight (§5). Hourly reports are limited to 31 days (745 buckets),
     other groupings to 3660 days.
@@ -40,14 +41,13 @@ three-zone residential tariffs.
     malformed fields are rejected by the schema (`invalid_format` / `vol.Invalid`). The websocket command needs no
     admin rights (read-only).
 - Settings (single instance, `single_config_entry`): all settings live in `entry.options` (`entry.data` is empty):
-  `time_zone`, `spike_limit` (decimal string, `null` = check off), `device_spike_limits` (entity id -> decimal
-  string; missing = use the global limit, `null` = off for that device), `entities`, `applied` (list of
+  `time_zone`, `spike_limit` (decimal string, `null` = check off), `sensors` (the selection, below), `applied` (list of
   `{from, tariff}`, §3; omitted = nothing applied), optional `compare` (list of tariff ids, §3) and optional
   `panel` (`{show, title, icon}`, the planned sidebar entry; stored only, it has no effect yet). Decimals are
   strings without exponent. The time zone is stored explicitly (default: the Home Assistant time zone at setup) and does
   not follow later Home Assistant changes, so retroactive prices never move silently. The config flow asks for
-  time zone and spike limit. "Configure" opens an options menu: **Sensors** (energy sensors, optional
-  per-device spike limits: empty = global, `0` = off), **Applied tariffs** (a table of the history; use one tariff
+  time zone and spike limit. "Configure" opens an options menu: **Sensors** (selection and per-sensor spike limits,
+  below), **Applied tariffs** (a table of the history; use one tariff
   for everything, add a change, re-date / re-assign / delete a change), **Tariff comparison** (default set or an
   explicit list) and **General settings** (time zone, spike limit, sidebar options). Every leaf form re-reads
   the current options on submit and saves the full option set. The forms that change the tariff document
@@ -60,7 +60,10 @@ three-zone residential tariffs.
   `OptionsFlowWithReload`, which is missing in the minimum HA version). The
   reloaded entry holds the parsed tariff configuration and the effective schedule (`None` when nothing is
   applied), so adding, editing or deleting a tariff or changing the applied history re-prices all past hours.
-  The config entry has `VERSION` 2; version 1 (one `tariff_plan` subentry per plan) is migrated at startup (§3).
+  The config entry has `VERSION` 3. Version 1 (one `tariff_plan` subentry per plan) is migrated at startup (§3);
+  version 2 (`entities` + `device_spike_limits`) becomes `sensors`: a non-empty `entities` list becomes a `filter`
+  selection of exactly those ids (`include.entity_id`), an empty one the first-setup default, every per-device
+  limit an override (a major bump, because the old keys are removed). An entry with a newer version fails to set up.
   Before reloading, the update listener reconciles the options with the tariff subentries (Home Assistant lets users
   delete any subentry): a deleted tariff is removed from `applied` (the previous item continues over the freed
   period, equal neighbours merge; when the first item is removed the next one takes over its start if that tariff
@@ -68,6 +71,54 @@ three-zone residential tariffs.
   applied but tariffs do, the first remaining tariff is applied from its first version; no tariffs left means
   nothing applied) and from an explicit `compare` list; the first tariff added to an entry without tariffs is applied
   from its first version.
+- **Sensor selection** (`entry.options["sensors"]`, `engine/sensors.py` + `sensor_resolver.py`), resolved on every
+  request, so new eligible sensors need no reconfiguration:
+
+  ```json
+  "sensors": {
+    "mode": "filter",
+    "include": { "entity_id": ["sensor.plug_01_energy"], "area_id": ["kitchen"], "label_id": ["cost_tracking"],
+                 "entity_globs": ["sensor.*_plug_*_energy"] },
+    "exclude": { "entity_id": ["sensor.main_meter_t1"], "entity_globs": ["sensor.sub_meter_*"] },
+    "overrides": { "sensor.water_heater_energy": { "spike_limit": "6" } }
+  }
+  ```
+
+  - `mode` is `energy_dashboard` or `filter`. `include` exists only in `filter` mode: the string `"all"` or a target
+    (`entity_id`, `device_id`, `area_id`, `floor_id`, `label_id`, `entity_globs`; non-empty, unique strings, at
+    least one entry). `exclude` (same keys, both modes, `{}` when empty) wins over include. `overrides` maps an entity
+    id to `{"spike_limit": "<decimal>" | null}` (`null` = no spike check; no entry = the global limit) and is kept
+    when a sensor leaves the selection. Globs use `fnmatch.fnmatchcase` on the entity id and must match
+    `^[a-z0-9_.*?\[\]!-]+$`.
+  - An **eligible** sensor has recorder sum statistics in an energy unit (Wh / kWh / MWh) and `device_class: energy`
+    (entity registry `device_class` or `original_device_class`, else the state attribute). `include: all` takes every
+    eligible sensor; device, area, floor, label and glob rules match eligible sensors only; ids listed in `entity_id`
+    are selected even when not eligible (the report then shows their `no_statistics` / `unsupported` status). A
+    sensor's area is its own, else its device's; its labels are the union of entity, device and area labels. Hidden
+    and categorized entities are not skipped. Exclude matches any id, regardless of eligibility. Filter mode sorts by
+    entity id.
+  - `energy_dashboard` mode takes the `stat_consumption` ids of the Energy dashboard's individual devices
+    (`device_consumption`, electricity only), in dashboard order, duplicates dropped, minus `exclude`; external
+    statistics are kept.
+  - **Nesting.** In both modes the dashboard's `included_in_stat` gives a parent map. For the ids of one report a
+    sensor's *upstream* is the nearest ancestor that is also in the report **and has readable statistics** (status
+    `ok`); members of a cycle have none. Nested sensors keep their own row, but in every `total` row (buckets and
+    `totals`) an hour of a nested sensor is left out **only where one of its ancestors (the whole chain of
+    upstreams) has a counted value for that same hour** (a measured or estimated one, not a missing or excluded
+    hour). Where no ancestor has a value (it started later, has gaps, was excluded as a spike) the nested sensor's
+    energy counts, so in a chain `a` inside `b` inside `c` each hour is counted once, by the outermost device that
+    has a value. A report for a subset of the sensors counts a child whose parent is not in the subset.
+  - **Options flow.** `sensors` is a menu ("N sensors in the calculation" and a list of at most 30 sensors, nested
+    ones marked; nothing is listed for an empty selection) with `sensors_select` and `device_limits`.
+    `sensors_select` takes the mode and, in sections, include (`all`, a target selector limited to energy sensors,
+    glob list) and exclude (target, globs); errors
+    `no_dashboard_devices`, `nothing_included`, `invalid_glob`, `invalid_target`. A valid submission opens
+    `sensors_preview` (the candidate's count and list; save or edit again); `sensors_save` re-reads the current
+    options and replaces mode / include / exclude only. `device_limits` has one optional field per selected sensor
+    and per sensor that already has an override (empty = global, `0` = off) and aborts with `no_sensors` when
+    there is nothing to show.
+  - **First setup** stores `energy_dashboard` when the Energy dashboard has individual devices, otherwise `filter` with
+    `include: all`.
 - Card (Lit + TypeScript, `frontend/`): renders the table; served by the integration itself (static path + extra JS),
   so users install one HACS repo. Details in §4.1.
 - Stage 2 (optional): write **4 external statistics** series for the Energy dashboard:
@@ -217,7 +268,7 @@ values are rounded (see Rounding above).
   "grouping": "day",
   "zones": [ { "key": "t1", "name": "Day" }, { "key": "t2", "name": "Night" } ],
   "plans": [ { "valid_from": "2026-01-01", "name": "Two-zone", "zones": [ "...see below" ] } ],
-  "devices": [ { "entity_id": "sensor.plug_01", "name": "Plug 01", "statistics": "ok" } ],
+  "devices": [ { "entity_id": "sensor.plug_01", "name": "Plug 01", "statistics": "ok", "upstream": null } ],
   "buckets": [ "<bucket>" ],
   "totals": "<bucket>",
   "unpriced_hours": 0,
@@ -259,6 +310,9 @@ values are rounded (see Rounding above).
   applied switch, the first version of the new tariff is re-dated to the switch date (§3).
 - **Issues.** `kind` is `estimated` / `excluded_negative` / `excluded_spike`; `hours` is the number of
   real elapsed hours of the issue span (not wall-clock, so correct across DST changes) and `kwh` its rounded energy.
+- **`devices[].upstream`** is the entity id of the sensor this one is measured inside of (see sensor selection in
+  §2), or `null`. A device with an upstream keeps its row, but its hours are left out of the `total` rows where an
+  ancestor has a counted value (see §2). Additive; `schema_version` stays 1.
 - **`devices[].statistics`** is the recorder adapter's status string (e.g. `ok`, `no_statistics`,
   `unsupported`).
 - **Versioning.** New keys may be added without a version bump (consumers must ignore unknown keys);
@@ -278,7 +332,7 @@ the repo as is, with no build step) and CI fails when it does not match the sour
   after 30 s it defines the card anyway and logs a warning. The static path is served with long cache headers:
   a manually added dashboard resource must carry a version query (`?v=...`) to pick up updates; the automatic
   extra module does this by itself.
-- **Config.** `title`, `entities` (subset of the configured sensors; default all), `period` (initial preset,
+- **Config.** `title`, `entities` (subset of the selected sensors; default all), `period` (initial preset,
   default `this_month`), `grouping` (`auto` / `hour` / `day` / `week` / `month` for the "by period" table,
   default `auto`), `show_breakdown` (bool). No visual editor yet.
 - **Period picker** (modelled on the Energy dashboard's period selector). A period is a closed range of local
@@ -401,6 +455,9 @@ of looking green.
 | `statistics_during_period(..., types={"change", ...})` | ≤ 2023.x | Reading side; stable. |
 | `get_metadata(statistic_ids=...)` | ≤ 2023.x | Adapter reads only `has_sum` and `unit_of_measurement`. |
 | Config subentries | 2025.3 | Hard floor: tariffs are subentries. |
+| Energy preferences `device_consumption[].included_in_stat` | 2025.4 | Read with `.get()` through `energy.data.async_get_manager(hass).data` (`None` = never saved); only `sensor_resolver.py` imports it. |
+| `get_metadata(statistic_type="sum", statistic_source="recorder")` | ≤ 2023.x | Lists the energy sum statistics (adapter, keyword arguments, recorder executor). |
+| Target resolution helper | moved | `helpers.service.async_extract_referenced_entity_ids` (2025.4) became `helpers.target...` on `dev`; devices / areas / floors / labels are resolved from the registries by ourselves instead. |
 | `StatisticMeanType` / `mean_type` in metadata | 2025.4 | Writing external statistics (stage 2). |
 | `unit_class` in statistics metadata | 2025.11 | Adapter passes it only when supported. |
 | `has_mean` removed; `mean_type` + `unit_class` mandatory for writes | 2026.11 | Adapter must already comply. |
