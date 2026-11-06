@@ -1,6 +1,6 @@
 # 014 — Cost card with an Energy-style period picker
 
-Status: in-review
+Status: in-review (round 1: APPROVE; suggestions 1–6 and 8–10 applied)
 Roadmap: stage 4 (card on mocked data, then on a dev HA instance with real statistics)
 Spec sections: SPEC §2 (card serving), §4 (JSON contract), §4.1 (card, new)
 
@@ -57,7 +57,7 @@ built and tested there, also on SELinux-enforcing rootless podman hosts.
 
 ## Acceptance criteria
 - [x] `podman build .devcontainer` (rootless, SELinux enforcing) succeeds; `node --version` → v24.22.2, npm 11.
-- [x] `npm test` (in `frontend/`) → 75 passed; `npm run typecheck` → no errors; `npm run check-bundle` → up to date.
+- [x] `npm test` (in `frontend/`) → 82 passed; `npm run typecheck` → no errors; `npm run check-bundle` → up to date.
 - [x] `script/test` → all passed, engine coverage 100 %; `script/lint` → clean; `uv run --group ha pyright` → 0 errors.
 - [x] actionlint → clean.
 - [x] Dev HA (2026.9) with a copy of real long-term statistics (27 energy sensors, months of history, kept
@@ -89,6 +89,15 @@ built and tested there, also on SELinux-enforcing rootless podman hosts.
   lock); the test marks `frontend` as loaded and patches `add_extra_js_url`.
 - `StaticPathConfig` is imported from `homeassistant.components.http` (defined there in 2025.4, re-exported in
   later versions); pyright's private-import warning on latest HA is silenced on that line.
+
+- Review round 1 suggestions applied: the integration's time zone is remembered across errors and a running
+  period is re-requested when the first report shows a different zone (1); the current-hour end carries an
+  explicit UTC offset (2); auto-refresh runs while the last request was cut at the current hour, so once more
+  after the period ended (3); `live()` for select values (4); the grouping select shows "auto" when the chosen
+  grouping is not allowed (5); week buckets are labelled with the whole calendar week (6); registration falls back
+  after 30 s with a warning (8); SPEC notes the cache/version caveat for manual resources (9); the breakdown picks
+  rows by `entity_id` (10). Not changed: the Lit dev-mode "change-in-update" warning (7) — loading starts in
+  `updated()` on purpose (after the period is set) and costs one extra render per request.
 
 ## Follow-ups
 - Tariff comparison scenarios (task 015).
