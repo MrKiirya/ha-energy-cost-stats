@@ -22,6 +22,7 @@ dev = [
     "ruff>=0.6",
     "pyright[nodejs]>=1.1",
     "pyyaml>=6",
+    "jsonschema>=4",
     "tzdata",
 ]
 ha = [
