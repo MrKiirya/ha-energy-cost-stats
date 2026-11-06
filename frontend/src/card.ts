@@ -25,9 +25,13 @@ import {
   type Preset,
 } from "./period";
 import {
+  SCENARIO_PRESETS,
   errorCode,
   errorText,
+  fetchComparison,
   fetchReport,
+  type ComparisonDocument,
+  type ScenarioConfig,
   type Bucket,
   type HassLike,
   type ReportDocument,
@@ -50,6 +54,8 @@ export interface CardConfig {
   grouping?: GroupingChoice;
   /** Show the "by period" table expanded (default false). */
   show_breakdown?: boolean;
+  /** Tariff scenarios to compare with the configured plans (1-5). */
+  compare?: ScenarioConfig[];
 }
 
 /** While the period contains today, re-fetch this often (new hours get compiled). */
@@ -77,6 +83,8 @@ export class EnergyCostStatsCard extends LitElement {
     _customStart: { state: true },
     _customEnd: { state: true },
     _breakdownEntity: { state: true },
+    _comparison: { state: true },
+    _comparisonError: { state: true },
   };
 
   hass?: HassLike;
@@ -91,6 +99,9 @@ export class EnergyCostStatsCard extends LitElement {
   private _customEnd = "";
   private _breakdownEntity = "";
   private _requestSeq = 0;
+  private _comparison?: ComparisonDocument;
+  private _comparisonError?: string;
+  private _comparisonSeq = 0;
   /** The integration's time zone, learned from the first report (kept on errors). */
   private _reportTimeZone?: string;
   /** The last request was cut at the current hour: refresh until it is not. */
@@ -117,6 +128,24 @@ export class EnergyCostStatsCard extends LitElement {
     ) {
       throw new Error("entities must be a list of entity ids");
     }
+    if (config.compare !== undefined) {
+      if (!Array.isArray(config.compare) || config.compare.length < 1 || config.compare.length > 5) {
+        throw new Error("compare must be a list of 1 to 5 tariff scenarios");
+      }
+      for (const scenario of config.compare) {
+        if (
+          !scenario ||
+          typeof scenario !== "object" ||
+          !SCENARIO_PRESETS.includes(scenario.preset) ||
+          !scenario.prices ||
+          typeof scenario.prices !== "object"
+        ) {
+          throw new Error(
+            `each compare entry needs a preset (${SCENARIO_PRESETS.join(", ")}) and prices`,
+          );
+        }
+      }
+    }
     const previous = this._config;
     this._config = config;
     this._groupingChoice = config.grouping ?? "auto";
@@ -124,6 +153,7 @@ export class EnergyCostStatsCard extends LitElement {
       // Config edited in the dashboard editor: start over from the configured period.
       this._period = undefined;
       this._report = undefined;
+      this._comparison = undefined;
     }
   }
 
@@ -180,16 +210,15 @@ export class EnergyCostStatsCard extends LitElement {
   protected override updated(changed: PropertyValues): void {
     super.updated(changed);
     if (!this.hass || !this._period) return;
-    if (
-      changed.has("_period") ||
-      changed.has("_groupingChoice") ||
-      (changed.has("hass") && changed.get("hass") === undefined)
-    ) {
-      void this._load();
+    const periodChanged =
+      changed.has("_period") || (changed.has("hass") && changed.get("hass") === undefined);
+    if (periodChanged || changed.has("_groupingChoice")) {
+      // The comparison does not depend on the grouping.
+      void this._load(periodChanged);
     }
   }
 
-  private async _load(): Promise<void> {
+  private async _load(withComparison = true): Promise<void> {
     const hass = this.hass;
     const period = this._period;
     if (!hass || !period) return;
@@ -211,7 +240,9 @@ export class EnergyCostStatsCard extends LitElement {
       if (report.time_zone !== timeZone && containsDate(period, todayIn(report.time_zone))) {
         // "Today" and the current hour were computed in HA's zone, not the
         // integration's: ask again with the right one.
-        void this._load();
+        void this._load(withComparison);
+      } else if (withComparison && this._config?.compare) {
+        void this._loadComparison(period, report.time_zone);
       }
     } catch (err) {
       if (seq !== this._requestSeq) return;
@@ -230,6 +261,31 @@ export class EnergyCostStatsCard extends LitElement {
       this._report = undefined;
     } finally {
       if (seq === this._requestSeq) this._loading = false;
+    }
+  }
+
+  private async _loadComparison(period: Period, timeZone: string): Promise<void> {
+    const hass = this.hass;
+    const scenarios = this._config?.compare;
+    if (!hass || !scenarios) return;
+    const seq = ++this._comparisonSeq;
+    try {
+      const comparison = await fetchComparison(hass, {
+        period,
+        entities: this._config?.entities,
+        timeZone,
+        scenarios,
+      });
+      if (seq !== this._comparisonSeq) return;
+      this._comparison = comparison;
+      this._comparisonError = undefined;
+    } catch (err) {
+      if (seq !== this._comparisonSeq) return;
+      this._comparison = undefined;
+      this._comparisonError =
+        errorCode(err) === "invalid_scenario"
+          ? this._strings.t("error.invalid_scenario", { message: errorText(err) })
+          : this._strings.t("error.generic", { message: errorText(err) });
     }
   }
 
@@ -429,6 +485,7 @@ export class EnergyCostStatsCard extends LitElement {
           </tfoot>
         </table>
       </div>
+      ${this._config?.compare ? this._renderComparison(s, report) : nothing}
       ${report.grouping !== "total" ? this._renderBreakdown(s, report) : nothing}
       ${report.issues.length > 0 ? this._renderIssues(s, report, names) : nothing}
     `;
@@ -569,6 +626,96 @@ export class EnergyCostStatsCard extends LitElement {
             </tfoot>
           </table>
         </div>
+      </details>
+    `;
+  }
+
+  private _renderComparison(s: Strings, report: ReportDocument): TemplateResult {
+    const comparison = this._comparison;
+    const currency = report.currency;
+    let body: TemplateResult;
+    if (this._comparisonError) {
+      body = html`<div class="error" role="alert">${this._comparisonError}</div>`;
+    } else if (!comparison) {
+      body = html`<div class="note">${s.t("loading")}</div>`;
+    } else {
+      const actual = comparison.actual.totals.total;
+      const rows = [
+        {
+          name: s.t("compare.current"),
+          sub: comparison.actual.plans.map((p) => p.name).join(", "),
+          doc: comparison.actual,
+          current: true,
+        },
+        ...comparison.scenarios.map((sc) => ({
+          name: sc.name,
+          sub: "",
+          doc: sc.report,
+          current: false,
+        })),
+      ];
+      const costs = rows
+        .map((r) => r.doc.totals.total.cost)
+        .filter((c): c is string => c !== null)
+        .map(Number);
+      // Mark the cheapest only when it is unique (a tie recommends nothing).
+      const minimum = costs.length > 1 ? Math.min(...costs) : null;
+      const cheapest =
+        minimum !== null && costs.filter((c) => c === minimum).length === 1 ? minimum : null;
+      body = html`
+        <div class="table-wrap">
+          <table class="compare">
+            <thead>
+              <tr>
+                <th class="name">${s.t("compare.tariff")}</th>
+                <th class="name zones">${s.t("compare.zones")}</th>
+                <th class="num">${s.t("cost")}</th>
+                <th class="num">${s.t("avg_price")}</th>
+                <th class="num">${s.t("compare.difference")}</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map((r) => {
+                const total = r.doc.totals.total;
+                const best = cheapest !== null && total.cost !== null && Number(total.cost) === cheapest;
+                const diff =
+                  r.current || total.cost === null || actual.cost === null
+                    ? null
+                    : Number(total.cost) - Number(actual.cost);
+                const zones = r.doc.zones
+                  .flatMap((zone, i) => {
+                    const kwh = total.zones[i]?.kwh ?? null;
+                    if (kwh === null) return []; // zone without hours in the period
+                    const name = r.current ? zone.name : s.zoneName(zone.key, r.doc.zones.length);
+                    return [`${name} ${s.number(kwh, 1)}`];
+                  })
+                  .join(" · ");
+                return html`<tr class=${best ? "best" : ""}>
+                  <th scope="row" class="name">
+                    <span>${r.name}</span>
+                    ${best ? html`<span class="badge best">${s.t("compare.best")}</span>` : nothing}
+                    ${r.sub ? html`<span class="sub">${r.sub}</span>` : nothing}
+                  </th>
+                  <td class="name zones">${zones} ${s.t("kwh")}</td>
+                  <td class="num strong">${s.money(total.cost, currency)}</td>
+                  <td class="num">${s.avgPrice(total.cost, total.kwh)}</td>
+                  <td class="num diff ${diff === null ? "" : diff < 0 ? "cheaper" : diff > 0 ? "dearer" : ""}">
+                    ${diff === null ? "—" : s.signedMoney(diff, currency, Number(actual.cost))}
+                  </td>
+                </tr>`;
+              })}
+            </tbody>
+          </table>
+        </div>
+        ${comparison.actual.unpriced_hours > 0 || comparison.actual.plans.length === 0
+          ? html`<div class="note warning">${s.t("compare.actual_incomplete")}</div>`
+          : nothing}
+      `;
+    }
+    return html`
+      <details class="comparison" open>
+        <summary>${s.t("compare.title")}</summary>
+        ${body}
       </details>
     `;
   }
@@ -778,6 +925,26 @@ export class EnergyCostStatsCard extends LitElement {
     summary {
       cursor: pointer;
       font-weight: 500;
+    }
+    .compare td.zones {
+      white-space: normal;
+      color: var(--secondary-text-color);
+      font-size: 0.85em;
+      min-width: 12em;
+    }
+    .compare tr.best th.name span:first-child {
+      font-weight: 600;
+    }
+    .badge.best {
+      background: var(--success-color, #43a047);
+      padding: 0 6px;
+      cursor: default;
+    }
+    .diff.cheaper {
+      color: var(--success-color, #43a047);
+    }
+    .diff.dearer {
+      color: var(--error-color, #db4437);
     }
     .issues ul {
       margin: 4px 0;

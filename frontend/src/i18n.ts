@@ -61,6 +61,20 @@ const EN = {
   "error.unknown_command": "The integration is not loaded (restart Home Assistant after installing).",
   "error.generic": "Could not load the report: {message}",
   coverage: "{measured} measured, {estimated} estimated, {excluded} excluded, {missing} missing of {expected} h",
+  "compare.title": "Tariff comparison",
+  "compare.tariff": "Tariff",
+  "compare.zones": "Consumption by zone",
+  "compare.difference": "Difference",
+  "compare.current": "Current tariff",
+  "compare.best": "best",
+  "compare.actual_incomplete":
+    "The current tariff does not cover the whole period, so its cost and the differences are incomplete.",
+  "error.invalid_scenario": "Invalid tariff scenario in the card config: {message}",
+  "zone.t0": "Single",
+  "zone.t1": "Day",
+  "zone.t1.peak": "Peak",
+  "zone.t2": "Night",
+  "zone.t3": "Semi-peak",
 } as const;
 
 export type StringKey = keyof typeof EN;
@@ -125,6 +139,20 @@ const RU: Record<StringKey, string> = {
   "error.generic": "Не удалось загрузить отчёт: {message}",
   coverage:
     "{measured} измерено, {estimated} оценено, {excluded} исключено, {missing} нет из {expected} ч",
+  "compare.title": "Сравнение тарифов",
+  "compare.tariff": "Тариф",
+  "compare.zones": "Потребление по зонам",
+  "compare.difference": "Разница",
+  "compare.current": "Текущий тариф",
+  "compare.best": "выгоднее",
+  "compare.actual_incomplete":
+    "Текущий тариф покрывает не весь период: его сумма и разница неполные.",
+  "error.invalid_scenario": "Ошибка в сценарии тарифа в настройках карточки: {message}",
+  "zone.t0": "Круглосуточно",
+  "zone.t1": "День",
+  "zone.t1.peak": "Пик",
+  "zone.t2": "Ночь",
+  "zone.t3": "Полупик",
 };
 
 export class Strings {
@@ -174,6 +202,31 @@ export class Strings {
       }
     }
     return this.number(value, 2);
+  }
+
+  /** Display name of a preset zone key; `t1` is "peak" in a three-zone plan. */
+  zoneName(key: string, zoneCount: number): string {
+    if (key === "t1" && zoneCount >= 3) return this.t("zone.t1.peak");
+    const known: Record<string, StringKey> = {
+      t0: "zone.t0",
+      t1: "zone.t1",
+      t2: "zone.t2",
+      t3: "zone.t3",
+    };
+    const name = known[key];
+    return name ? this.t(name) : key;
+  }
+
+  /** Signed money difference with its share of `base`, e.g. "−12.30 ₽ (−4 %)". */
+  signedMoney(diff: number, currency: string | null, base: number): string {
+    const rounded = Math.round(diff * 100) / 100;
+    const sign = rounded > 0 ? "+" : rounded < 0 ? "−" : "±";
+    const amount = this.money(Math.abs(rounded).toFixed(2), currency);
+    if (!base) return `${sign}${amount}`;
+    const share = new Intl.NumberFormat(this.locale, { maximumFractionDigits: 1 }).format(
+      Math.abs((rounded / base) * 100),
+    );
+    return `${sign}${amount} (${sign}${share} %)`;
   }
 
   /** Average price = cost / kWh, for display only. */
