@@ -1,0 +1,8 @@
+# Prices for a zone the version does not have.
+tariffs:
+  - id: flat
+    name: Flat
+    versions:
+      - valid_from: 2026-01-01
+        preset: single_rate
+        prices: { t9: "7.40" }

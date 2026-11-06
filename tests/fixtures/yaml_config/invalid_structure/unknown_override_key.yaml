@@ -1,0 +1,6 @@
+# An unknown key inside an override.
+sensors:
+  mode: filter
+  overrides:
+    sensor.plug_01_energy:
+      price: 1

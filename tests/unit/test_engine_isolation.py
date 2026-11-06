@@ -141,3 +141,15 @@ def test_unit_tests_do_not_import_integration_package():
     assert not all_violations, (
         f"integration package imports found in unit tests: {all_violations}"
     )
+
+
+@pytest.mark.parametrize("name", ["settings.py", "yaml_config.py"])
+def test_settings_and_yaml_config_have_no_ha_imports(name):
+    path = ENGINE_DIR.parent / name
+    source = path.read_text(encoding="utf-8")
+    violations = [
+        item
+        for item in find_forbidden_engine_imports(source)
+        if "homeassistant" in item
+    ]
+    assert not violations, f"{name}: {violations}"

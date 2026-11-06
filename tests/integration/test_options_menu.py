@@ -144,7 +144,13 @@ async def test_init_is_menu(hass: HomeAssistant):
     result = await _open(hass, entry)
     assert result["type"] is FlowResultType.MENU
     assert result["step_id"] == "init"
-    assert result["menu_options"] == ["sensors", "applied", "compare", "general"]
+    assert result["menu_options"] == [
+        "sensors",
+        "applied",
+        "compare",
+        "general",
+        "export_yaml",
+    ]
 
 
 async def test_general_saves_and_keeps_other_options(hass: HomeAssistant):
@@ -490,6 +496,10 @@ async def test_options_strings_complete(hass: HomeAssistant):
             "applied_pick",
             "applied_change",
             "compare",
+            "yaml_mode",
+            "sensors_view",
+            "applied_view",
+            "export_yaml",
         ):
             assert "title" in steps[step_id], (path, step_id)
         assert set(steps["init"]["menu_options"]) == {
@@ -497,7 +507,30 @@ async def test_options_strings_complete(hass: HomeAssistant):
             "applied",
             "compare",
             "general",
+            "export_yaml",
         }
+        assert set(steps["yaml_mode"]["menu_options"]) == {
+            "sensors_view",
+            "applied_view",
+            "export_yaml",
+        }
+        for step_id in ("sensors_view", "applied_view"):
+            assert set(steps[step_id]["menu_options"]) == {"yaml_mode"}
+        assert set(steps["export_yaml"]["menu_options"]) == {"init"}
+        for placeholder in (
+            "{time_zone}",
+            "{spike_limit}",
+            "{compare}",
+            "{sidebar}",
+            "{error}",
+        ):
+            assert placeholder in steps["yaml_mode"]["description"], path
+        assert "{history}" in steps["applied_view"]["description"]
+        assert "{count}" in steps["sensors_view"]["description"]
+        assert "```yaml\n{yaml}```" in steps["export_yaml"]["description"]
+        assert "{schema_url}" in steps["export_yaml"]["description"]
+        for step in steps.values():
+            assert "'" not in step.get("description", ""), path
         assert set(steps["applied"]["menu_options"]) == {
             "applied_single",
             "applied_add",
@@ -549,8 +582,15 @@ async def test_options_strings_complete(hass: HomeAssistant):
             "invalid_config",
         ):
             assert error in options["error"], (path, error)
-        for abort in ("invalid_options", "no_tariffs", "no_sensors"):
+        for abort in ("invalid_options", "no_tariffs", "no_sensors", "yaml_mode"):
             assert abort in options["abort"], (path, abort)
+        full = json.loads((COMPONENT / path).read_text())
+        assert "yaml_mode" in full["config"]["abort"], path
+        assert "yaml_mode" in full["config_subentries"]["tariff"]["abort"], path
+        assert "invalid_yaml" in full["issues"], path
+        assert "{error}" in full["issues"]["invalid_yaml"]["description"], path
+        assert "{error}" in full["exceptions"]["yaml_invalid"]["message"], path
+        assert "reload" in full["services"], path
     # Every form field of every leaf step has a label.
     flows = {
         "general": ("general",),

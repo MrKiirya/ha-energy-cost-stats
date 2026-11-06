@@ -1,0 +1,3 @@
+# Filter mode without include selects every eligible sensor.
+sensors:
+  mode: filter

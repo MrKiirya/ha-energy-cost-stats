@@ -1,0 +1,53 @@
+# The complete example of docs/CONFIG-DESIGN.md with generic ids.
+time_zone: Europe/Berlin
+spike_limit: "4"
+
+panel:
+  show: true
+  title: Energy cost
+  icon: mdi:cash-multiple
+
+sensors:
+  mode: filter
+  include:
+    entity_id: [sensor.plug_01_energy]
+    area_id: [kitchen]
+    label_id: [cost_tracking]
+    entity_globs: ["sensor.*_plug_*_energy"]
+  exclude:
+    entity_id: [sensor.meter_t1, sensor.meter_t2]
+    entity_globs: ["sensor.sub_meter_*"]
+  overrides:
+    sensor.plug_01_energy:
+      spike_limit: "6"
+    sensor.plug_02_energy:
+      spike_limit: null
+
+tariffs:
+  - id: two_zone
+    name: Two-zone
+    versions:
+      - valid_from: 2026-01-01
+        preset: ru_two_zone
+        prices: { t1: "8.10", t2: "3.20" }
+      - valid_from: 2026-07-01
+        prices: { t1: "8.75", t2: "3.45" }
+  - id: three_zone
+    name: Three-zone
+    versions:
+      - valid_from: 2026-07-01
+        zones:
+          - { key: t1, name: Peak, price: "10.20", hours: "07:00-10:00, 17:00-21:00" }
+          - { key: t3, name: Semi-peak, price: "8.75", hours: "10:00-17:00, 21:00-23:00" }
+          - { key: t2, name: Night, price: "3.45", hours: "23:00-07:00" }
+  - id: single_rate
+    name: Single-rate
+    versions:
+      - valid_from: 2026-07-01
+        preset: single_rate
+        prices: { t0: "7.40" }
+
+applied:
+  - { from: 2026-01-01, tariff: two_zone }
+
+compare: [single_rate, three_zone]

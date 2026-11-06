@@ -1,0 +1,9 @@
+# A preset with a per-zone hours override.
+tariffs:
+  - id: two_zone
+    name: Two-zone
+    versions:
+      - valid_from: 2026-01-01
+        preset: ru_two_zone
+        prices: { t1: "8.10", t2: "3.20" }
+        hours: { t1: "06:00-22:00", t2: "22:00-06:00" }

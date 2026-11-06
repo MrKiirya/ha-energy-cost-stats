@@ -1,0 +1,8 @@
+# An unknown key inside a zone.
+tariffs:
+  - id: flat
+    name: Flat
+    versions:
+      - valid_from: 2026-01-01
+        zones:
+          - { key: t0, name: All, price: "7.40", hours: "00:00-24:00", colour: red }

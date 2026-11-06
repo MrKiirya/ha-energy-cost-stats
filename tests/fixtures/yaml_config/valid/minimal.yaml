@@ -1,0 +1,3 @@
+# Only the time zone and the spike limit.
+time_zone: Europe/Berlin
+spike_limit: "4"

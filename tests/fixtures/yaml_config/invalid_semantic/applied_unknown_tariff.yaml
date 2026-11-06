@@ -1,0 +1,10 @@
+# applied names a tariff that does not exist.
+tariffs:
+  - id: flat
+    name: Flat
+    versions:
+      - valid_from: 2026-01-01
+        preset: single_rate
+        prices: { t0: "7.40" }
+applied:
+  - { from: 2026-01-01, tariff: other }

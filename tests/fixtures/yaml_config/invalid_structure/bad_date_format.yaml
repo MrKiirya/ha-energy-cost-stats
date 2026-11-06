@@ -1,0 +1,8 @@
+# A date that is not YYYY-MM-DD.
+tariffs:
+  - id: flat
+    name: Flat
+    versions:
+      - valid_from: "2026-1-1"
+        preset: single_rate
+        prices: { t0: "7.40" }

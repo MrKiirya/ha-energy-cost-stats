@@ -1,0 +1,2 @@
+# A spike limit of zero is not positive.
+spike_limit: 0

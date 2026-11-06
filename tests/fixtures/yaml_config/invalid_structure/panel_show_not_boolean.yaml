@@ -1,0 +1,3 @@
+# panel.show must be a boolean.
+panel:
+  show: maybe

@@ -1,0 +1,2 @@
+# A spike limit given as a string with an exponent.
+spike_limit: "1e-5"

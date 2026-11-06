@@ -1,0 +1,8 @@
+# Hours that are not HH:MM-HH:MM.
+tariffs:
+  - id: flat
+    name: Flat
+    versions:
+      - valid_from: 2026-01-01
+        zones:
+          - { key: t0, name: All, price: "7.40", hours: day }

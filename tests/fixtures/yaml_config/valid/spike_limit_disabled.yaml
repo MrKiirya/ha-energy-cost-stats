@@ -1,0 +1,2 @@
+# A null spike limit turns the spike check off.
+spike_limit: null

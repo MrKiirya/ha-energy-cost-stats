@@ -1,0 +1,7 @@
+# Filter mode with a device, floor and glob target.
+sensors:
+  mode: filter
+  include:
+    device_id: [0123456789abcdef]
+    floor_id: [ground]
+    entity_globs: ["sensor.plug_*_energy"]

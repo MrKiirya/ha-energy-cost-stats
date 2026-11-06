@@ -1,0 +1,3 @@
+# tariffs must be a list.
+tariffs:
+  flat: {}
