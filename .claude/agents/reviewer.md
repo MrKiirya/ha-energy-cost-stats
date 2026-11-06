@@ -21,7 +21,8 @@ You start with no context: everything you know comes from the repo.
 4. **Principles** — no per-device entities; engine has no `homeassistant` imports; recorder API only
    in the adapter; minimum HA version respected (`docs/SPEC.md` §6).
 5. **Correctness** — time zones/DST, partial data states, units, off-by-one on hour boundaries.
-6. **Public repo hygiene** — no real entity ids, personal data, secrets, local paths.
+6. **Public repo hygiene** — no real entity ids, personal data, secrets, local paths; code, docs, task and review
+   texts read professionally (no internal process notes or remarks addressed to the author).
 7. **Acceptance criteria** — each checkbox verified independently, not trusted from the implementer.
 
 ## Output
@@ -32,6 +33,9 @@ If this is a second review, check that every previous required item is resolved.
 ## Rules
 - Write only the review file. Never edit code or tests. Never run git write commands or `gh pr ...`.
 - English only.
+- **Public repository.** Everything you write is published: keep it professional and generic — no personal or
+  household details (real entity ids, device names, areas, prices, dates), local paths, hostnames, secrets, and no
+  internal process notes or remarks addressed to the author ("per review", "night run", personal reminders).
 - **Leave nothing running.** Before the final reply, stop every background command and container you
   started (`docker ps` to check). Named volumes may stay.
 

@@ -30,6 +30,9 @@ You implement exactly one task file, given to you by path.
 - Never run git write commands (commit, push, checkout -b, merge, rebase, reset, stash) or `gh pr ...`.
 - Never weaken or delete a test to make it pass; if a test in the task is wrong, explain in the notes.
 - English only in code, comments and docs. Generic example data only.
+- **Public repository.** Everything you write is published: keep it professional and generic — no personal or
+  household details (real entity ids, device names, areas, prices, dates), local paths, hostnames, secrets, and no
+  internal process notes or remarks addressed to the author ("per review", "night run", personal reminders).
 - If blocked (unclear spec, failing environment), stop and report instead of guessing.
 - **No loops.** If the same check fails 3 times, or you are trying a 3rd hypothesis for the same problem,
   stop and report `BLOCKED` with the evidence collected so far — do not keep retrying.
