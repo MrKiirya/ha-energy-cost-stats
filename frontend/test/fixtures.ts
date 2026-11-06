@@ -1,4 +1,4 @@
-import type { Bucket, ReportDocument, Row } from "../src/report";
+import type { Bucket, ComparisonDocument, ReportDocument, Row } from "../src/report";
 
 export function row(
   entity_id: string | null,
@@ -94,5 +94,57 @@ export function report(overrides: Partial<ReportDocument> = {}): ReportDocument 
       },
     ],
     ...overrides,
+  };
+}
+
+/** A grouping-total document with the given zones and total cost. */
+export function totalReport(
+  zones: { key: string; name: string; kwh: string; cost: string | null }[],
+  planName: string,
+): ReportDocument {
+  const doc = report({ grouping: "total" });
+  const total: Row = {
+    ...doc.totals.total,
+    kwh: "7.500",
+    cost: zones.some((z) => z.cost === null)
+      ? null
+      : zones.reduce((a, z) => a + Number(z.cost), 0).toFixed(2),
+    zones: zones.map((z) => ({ key: z.key, kwh: z.kwh, cost: z.cost, price: null })),
+  };
+  doc.zones = zones.map((z) => ({ key: z.key, name: z.name }));
+  doc.plans = [{ valid_from: "1970-01-01", name: planName }];
+  doc.totals = { ...doc.totals, total, rows: [] };
+  doc.buckets = [doc.totals];
+  return doc;
+}
+
+export function comparison(): ComparisonDocument {
+  return {
+    actual: totalReport(
+      [
+        { key: "t1", name: "Day", kwh: "4.500", cost: "46.35" },
+        { key: "t2", name: "Night", kwh: "3.000", cost: "13.29" },
+      ],
+      "Two-zone",
+    ),
+    scenarios: [
+      {
+        name: "Single-rate",
+        preset: "single_rate",
+        report: totalReport([{ key: "t0", name: "Single-rate", kwh: "7.500", cost: "56.25" }], "Single-rate"),
+      },
+      {
+        name: "Three-zone",
+        preset: "ru_three_zone",
+        report: totalReport(
+          [
+            { key: "t1", name: "Peak", kwh: "2.000", cost: "24.00" },
+            { key: "t2", name: "Night", kwh: "3.000", cost: "12.00" },
+            { key: "t3", name: "Semi-peak", kwh: "2.500", cost: "22.50" },
+          ],
+          "Three-zone",
+        ),
+      },
+    ],
   };
 }
