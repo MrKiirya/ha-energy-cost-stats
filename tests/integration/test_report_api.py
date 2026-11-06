@@ -274,6 +274,7 @@ def test_all_error_codes_translated():
         "invalid_period",
         "period_too_long",
         "unknown_entity",
+        "invalid_scenario",
     }
     service = STRINGS["services"]["get_report"]
     assert {"name", "description"} <= set(service)
@@ -475,3 +476,119 @@ async def test_no_entities_created(hass: HomeAssistant, hass_ws_client):
 
     registry = er.async_get(hass)
     assert not [e for e in registry.entities.values() if e.platform == DOMAIN]
+
+
+# ---- energy_cost_stats/compare (tasks/015-tariff-comparison.md) ----------------
+
+SINGLE = {"preset": "single_rate", "prices": {"t0": "7.50"}}
+THREE = {
+    "name": "Three-zone",
+    "preset": "ru_three_zone",
+    "prices": {"t1": "12.00", "t3": "9.00", "t2": "4.00"},
+}
+
+
+async def ws_compare(
+    hass: HomeAssistant, hass_ws_client, **fields: Any
+) -> dict[str, Any]:
+    client = await hass_ws_client(hass)
+    await client.send_json_auto_id(
+        {
+            "type": "energy_cost_stats/compare",
+            "start": DAY["start"],
+            "end": DAY["end"],
+            "scenarios": [SINGLE, THREE],
+            **fields,
+        }
+    )
+    return await client.receive_json()
+
+
+@pytest.mark.usefixtures("seeded")
+async def test_compare_prices_the_same_consumption(hass: HomeAssistant, hass_ws_client):
+    await setup_entry(hass)
+    msg = await ws_compare(hass, hass_ws_client)
+    assert msg["success"], msg
+    result = msg["result"]
+
+    actual = result["actual"]
+    assert actual["grouping"] == "total"
+    assert actual["totals"]["total"]["cost"] == "600.72"  # same as the day report
+    assert actual["totals"]["total"]["kwh"] == "72.000"
+
+    single, three = result["scenarios"]
+    assert (single["name"], single["preset"]) == ("Single-rate", "single_rate")
+    doc = single["report"]
+    assert [z["key"] for z in doc["zones"]] == ["t0"]
+    assert doc["plans"][0]["zones"][0]["price"] == "7.50"
+    assert doc["totals"]["total"]["kwh"] == "72.000"
+    assert doc["totals"]["total"]["cost"] == "540.00"  # 72 kWh x 7.50
+    assert doc["unpriced_hours"] == 0
+
+    assert three["name"] == "Three-zone"
+    total = three["report"]["totals"]["total"]
+    # Plug 01 uses 1 kWh/h, plug 02 2 kWh/h: 3 kWh per hour.
+    # Peak 7 h x 12, semi-peak 9 h x 9, night 8 h x 4 = 84 + 81 + 32 = 197 per kWh/h.
+    assert total["cost"] == "591.00"
+    assert {c["key"]: c["kwh"] for c in total["zones"]} == {
+        "t1": "21.000",
+        "t2": "24.000",
+        "t3": "27.000",
+    }
+    assert three["report"]["devices"] == actual["devices"]
+
+
+@pytest.mark.usefixtures("seeded")
+async def test_compare_without_configured_plan(hass: HomeAssistant, hass_ws_client):
+    await setup_entry(hass, plans=False)
+    msg = await ws_compare(hass, hass_ws_client, scenarios=[SINGLE])
+    assert msg["success"], msg
+    assert msg["result"]["actual"]["totals"]["total"]["cost"] is None
+    assert (
+        msg["result"]["scenarios"][0]["report"]["totals"]["total"]["cost"] == "540.00"
+    )
+
+
+@pytest.mark.usefixtures("seeded")
+async def test_compare_entities_subset(hass: HomeAssistant, hass_ws_client):
+    await setup_entry(hass)
+    msg = await ws_compare(hass, hass_ws_client, entities=[PLUG_01], scenarios=[SINGLE])
+    assert msg["success"], msg
+    doc = msg["result"]["scenarios"][0]["report"]
+    assert [d["entity_id"] for d in doc["devices"]] == [PLUG_01]
+    assert doc["totals"]["total"]["cost"] == "180.00"
+
+
+@pytest.mark.usefixtures("seeded")
+@pytest.mark.parametrize(
+    ("fields", "code"),
+    [
+        ({"scenarios": []}, "invalid_scenario"),
+        ({"scenarios": [SINGLE] * 6}, "invalid_scenario"),
+        ({"scenarios": [{"preset": "single_rate", "prices": {}}]}, "invalid_scenario"),
+        ({"scenarios": [{"preset": "x", "prices": {"t0": "1"}}]}, "invalid_scenario"),
+        ({"end": "2026-01-15"}, "invalid_period"),
+        ({"entities": ["sensor.other"]}, "unknown_entity"),
+        ({"start": "2016-01-01", "end": "2026-12-31"}, "period_too_long"),
+        ({"scenarios": "single_rate"}, "invalid_format"),
+        ({"grouping": "day"}, "invalid_format"),
+    ],
+)
+async def test_compare_errors(hass: HomeAssistant, hass_ws_client, fields, code):
+    await setup_entry(hass)
+    msg = await ws_compare(hass, hass_ws_client, **fields)
+    assert not msg["success"]
+    assert msg["error"]["code"] == code, msg
+
+
+async def test_compare_not_loaded(hass: HomeAssistant, hass_ws_client):
+    assert await async_setup_component(hass, DOMAIN, {})
+    msg = await ws_compare(hass, hass_ws_client)
+    assert msg["error"]["code"] == "not_loaded"
+
+
+def test_scenario_errors_name_the_scenario():
+    with pytest.raises(report_api.ReportError) as err:
+        report_api.parse_scenarios([SINGLE, {"preset": "single_rate", "prices": {}}])
+    assert err.value.code == "invalid_scenario"
+    assert "scenario 2" in err.value.message
