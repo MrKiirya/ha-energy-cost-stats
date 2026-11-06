@@ -70,6 +70,9 @@ const EN = {
   "compare.actual_incomplete":
     "The current tariff does not cover the whole period, so its cost and the differences are incomplete.",
   "error.invalid_scenario": "Invalid tariff scenario in the card config: {message}",
+  "preset.single_rate": "Single-rate",
+  "preset.ru_two_zone": "Two-zone",
+  "preset.ru_three_zone": "Three-zone",
   "zone.t0": "Single",
   "zone.t1": "Day",
   "zone.t1.peak": "Peak",
@@ -148,6 +151,9 @@ const RU: Record<StringKey, string> = {
   "compare.actual_incomplete":
     "Текущий тариф покрывает не весь период: его сумма и разница неполные.",
   "error.invalid_scenario": "Ошибка в сценарии тарифа в настройках карточки: {message}",
+  "preset.single_rate": "Однозонный",
+  "preset.ru_two_zone": "Двухзонный",
+  "preset.ru_three_zone": "Трёхзонный",
   "zone.t0": "Круглосуточно",
   "zone.t1": "День",
   "zone.t1.peak": "Пик",
@@ -202,6 +208,12 @@ export class Strings {
       }
     }
     return this.number(value, 2);
+  }
+
+  /** Localized name of a scenario preset (falls back to the preset id). */
+  presetName(preset: string): string {
+    const key = `preset.${preset}`;
+    return key in EN ? this.t(key as StringKey) : preset;
   }
 
   /** Display name of a preset zone key; `t1` is "peak" in a three-zone plan. */

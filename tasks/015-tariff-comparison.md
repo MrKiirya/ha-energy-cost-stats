@@ -1,6 +1,6 @@
 # 015 — Tariff comparison scenarios
 
-Status: in-review
+Status: in-review (round 1: CHANGES_REQUESTED, 2 required — fixed; round 2 pending)
 Roadmap: stage 4 (card) — author request 2026-11-06: "which tariff is cheaper for my actual usage — my current
 one, single-rate or three-zone?"
 Spec sections: SPEC §4 (JSON contract), §4.1 (card), §4.2 (new)
@@ -39,7 +39,7 @@ with the difference and the cheapest option marked.
 
 ## Acceptance criteria
 - [x] `script/test` → 535+ passed, engine coverage ≥ 95 % (scenario.py 100 %); `script/lint` clean; pyright 0.
-- [x] Card: vitest 93 passed; `tsc` clean; bundle rebuilt and `check-bundle` up to date.
+- [x] Card: vitest 99 passed; `tsc` clean; bundle rebuilt and `check-bundle` up to date.
 - [x] Dev HA with real statistics: comparison renders for a month and for today; numbers consistent
       (current tariff total equals the main table total).
 - [ ] CI green on the PR.
@@ -60,6 +60,14 @@ with the difference and the cheapest option marked.
   card, per-device rows available for later.
 - In the card, the comparison is fetched after the report succeeded (the integration's time zone is known then),
   with its own request sequence; the "best" badge needs a unique minimum.
+
+- Review round 1: (R1) an incomplete current tariff (unpriced hours / no plan / `null` cost) is left out of the
+  "best" choice and gets no differences; (R2) the comparison is keyed by period + sensors instead of a
+  "with comparison" flag: a grouping change while the new period's report is pending can no longer skip it, and
+  the previous period's comparison is cleared when the key changes. Suggestions applied: unnamed scenarios get the
+  localized preset name; the comparison uses the report request's own `end`; zone kWh matched by key;
+  `periods` must be a mapping when given (`""`/`[]` rejected); the card's `MAX_SCENARIOS` constant is checked
+  against the engine's by a unit test; refresh re-requests the comparison.
 
 ## Follow-ups
 - Decide where scenarios live (see open questions); maybe a `get_comparison` service.
