@@ -8,6 +8,8 @@ declare global {
   }
 }
 
+export const BOOT_TIMEOUT_MS = 30_000;
+
 /** Define the element in the registry that is current *now* (read at call time). */
 export function defineCard(): void {
   const registry = window.customElements;
@@ -40,6 +42,14 @@ export function registerCard(): void {
     !window.customElements.get("home-assistant");
   if (bootPending) {
     void window.customElements.whenDefined("home-assistant").then(defineCard);
+    // Should a future frontend never define <home-assistant> in this registry,
+    // do not stay invisible silently: define in whatever registry is current.
+    setTimeout(() => {
+      if (!window.customElements.get(CARD_TYPE)) {
+        console.warn(`${CARD_TYPE}: the frontend did not boot in time; defining the card anyway`);
+        defineCard();
+      }
+    }, BOOT_TIMEOUT_MS);
   } else {
     defineCard();
   }

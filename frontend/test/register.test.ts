@@ -54,6 +54,24 @@ describe("registration", () => {
     expect(window.customCards?.map((c) => c.type)).toEqual(["energy-cost-stats-card"]);
   });
 
+  it("defines anyway (with a warning) when the frontend never boots", async () => {
+    vi.useFakeTimers();
+    try {
+      document.body.appendChild(document.createElement("home-assistant"));
+      const registry = fakeRegistry();
+      useRegistry(registry);
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const { BOOT_TIMEOUT_MS } = await import("../src/index");
+      expect(registry.defined).toEqual([]);
+      vi.advanceTimersByTime(BOOT_TIMEOUT_MS);
+      expect(registry.defined).toEqual(["energy-cost-stats-card"]);
+      expect(warn).toHaveBeenCalledOnce();
+      warn.mockRestore();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("defines right away after boot (loaded as a dashboard resource)", async () => {
     document.body.appendChild(document.createElement("home-assistant"));
     const registry = fakeRegistry(["home-assistant"]);
