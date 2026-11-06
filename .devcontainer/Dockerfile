@@ -19,6 +19,19 @@ RUN apt-get update && \
 # (see CLAUDE.md "Bumping latest HA").
 COPY --from=ghcr.io/alexxit/go2rtc:1.9.14@sha256:675c318b23c06fd862a61d262240c9a63436b4050d177ffc68a32710d9e05bae /usr/local/bin/go2rtc /bin/go2rtc
 
+# Node 24 LTS for the card (frontend/). Copied from the official image instead
+# of the devcontainers "node" feature: the feature installs through
+# `RUN --mount`, which SELinux-enforcing rootless podman hosts (e.g. Fedora
+# Atomic) deny during the build, so the container could not be built there.
+# Only node and the bundled npm are copied (not /usr/local wholesale: the base
+# image keeps Python in /usr/local). Pinned by tag and multi-arch index digest;
+# bump both together.
+COPY --from=docker.io/library/node:24.22.2-trixie-slim@sha256:0820eaa85e07d0490446dd01d14707e17e6108a36988cf374899cd057eb3812d /usr/local/bin/node /usr/local/bin/node
+COPY --from=docker.io/library/node:24.22.2-trixie-slim@sha256:0820eaa85e07d0490446dd01d14707e17e6108a36988cf374899cd057eb3812d /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm && \
+    ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx && \
+    node --version && npm --version
+
 # Keep the uv-managed venv and cache out of the Windows bind mount (see
 # .devcontainer/devcontainer.json and tasks/002-devcontainer.md decision 2).
 ENV UV_PROJECT_ENVIRONMENT=/opt/venv

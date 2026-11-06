@@ -45,8 +45,8 @@ three-zone residential tariffs.
   single update listener (not `OptionsFlowWithReload`, which is missing in the minimum HA version). The
   reloaded entry holds the parsed tariff schedule (`None` when no plan exists), so adding, editing or deleting
   a plan re-prices all past hours.
-- Card (Lit + TypeScript): renders the table; served by the integration itself (static path + extra JS),
-  so users install one HACS repo.
+- Card (Lit + TypeScript, `frontend/`): renders the table; served by the integration itself (static path + extra JS),
+  so users install one HACS repo. Details in §4.1.
 - Stage 2 (optional): write **4 external statistics** series for the Energy dashboard:
   `energy_cost_stats:<zone>_kwh` and `energy_cost_stats:<zone>_cost` per zone (day/night → 4 series).
   Optional toggle (off by default) for per-device cost series. External statistics are not entities.
@@ -177,6 +177,43 @@ values are rounded (see Rounding above).
 - **Versioning.** New keys may be added without a version bump (consumers must ignore unknown keys);
   removing or renaming a key, or changing a value's meaning or format, bumps `schema_version`.
   `effective_price` is intentionally not serialized (the card derives it from `cost` / `kwh`).
+
+### 4.1 Card (`custom:energy-cost-stats-card`)
+Implemented in task 014. Sources in `frontend/` (Lit 3, TypeScript, Vitest + happy-dom, esbuild); the minified
+bundle `custom_components/energy_cost_stats/frontend/energy-cost-stats-card.js` is **committed** (HACS installs
+the repo as is, with no build step) and CI fails when it does not match the sources (`npm run check-bundle`).
+- **Serving.** `async_setup` registers the bundle as a static path `/energy_cost_stats/energy-cost-stats-card.js`
+  and, when the `frontend` integration is loaded, as an extra module with a content-hash `?v=` query, so no
+  dashboard resource has to be added. Extra modules are imported before the frontend boots, and recent frontends
+  replace `window.customElements` with a scoped-registry polyfill while booting; the bundle therefore waits for
+  the `<home-assistant>` element to be defined before it defines the card (else dashboards show "Configuration
+  error"). Loaded later (e.g. as a dashboard resource) it defines the card at once; if the frontend has not booted
+  after 30 s it defines the card anyway and logs a warning. The static path is served with long cache headers:
+  a manually added dashboard resource must carry a version query (`?v=...`) to pick up updates; the automatic
+  extra module does this by itself.
+- **Config.** `title`, `entities` (subset of the configured sensors; default all), `period` (initial preset,
+  default `this_month`), `grouping` (`auto` / `hour` / `day` / `week` / `month` for the "by period" table,
+  default `auto`), `show_breakdown` (bool). No visual editor yet.
+- **Period picker** (modelled on the Energy dashboard's period selector). A period is a closed range of local
+  dates. Presets: today, yesterday, this/last week, this/last month, this quarter, this year, last 7 / 30 days,
+  last 12 months, or a custom range. Arrows move by the period's own size: a range of whole calendar months
+  by its number of months (month 1, quarter 3, year 12), any other range by its number of days (day 1,
+  week 7). Weeks start on Monday (like the engine). "Now" moves to the same kind of period that contains today;
+  "next" is disabled when the next period would start after today.
+- **Request.** `start` = first date; `end` = the day after the last date, except for a period that contains today:
+  then the start of the current local hour as an ISO datetime with the zone's UTC offset (unambiguous in a DST
+  fall-back hour; zones with non-whole-hour offsets use the date), so hours that have not happened yet are not
+  shown as missing. "Today" and the current hour use the integration's time zone (the report's `time_zone`) once
+  known, else HA's; if the first report reveals a different zone for a running period, the card asks again. Auto grouping: ≤ 2 days hour, ≤ 45 days day, ≤ 120 days week, else month; hour is offered only
+  up to 31 days. While the last request was cut at the current hour the card re-fetches every 10 minutes (so also once after
+  the period has ended, to pick up its last hour); stale responses are dropped.
+- **Table.** One row per device with kWh and cost per zone (zone header shows the period price when it is a single
+  price), total kWh, total cost and the average price (`cost / kWh`, display only), plus the total row. `null`
+  shows as "—", never 0. Rows that are not `complete` get a badge (≈ estimated, ! partial/missing) with the
+  coverage in the tooltip. A collapsible "by period" table shows the buckets for all devices or one device.
+  Notes: no tariff plan, unpriced hours; a collapsible "data quality" list shows the issues.
+- **Language.** English and Russian strings in the card (`hass.locale.language`); numbers, money (HA currency) and
+  dates via `Intl` in that locale.
 
 ## 5. Known pitfalls to handle
 - Engine input is hourly deltas keyed by **UTC hour start**; zones, plan switches and groupings use local

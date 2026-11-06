@@ -26,7 +26,12 @@ Full product spec: [docs/SPEC.md](docs/SPEC.md) — read the sections your task 
   volume `energy-cost-stats-ha-config` (`HA_CONFIG_DIR`), which `script/develop` links to `config/configuration.yaml`
   on every start so repo edits take effect without polluting the Windows checkout.
 - Python **3.14** (dev, latest HA); CI also runs minimum HA **2025.4** on Python **3.13**.
-- Python deps via **uv**; card via **npm** (Node 24 LTS).
+- Python deps via **uv**; card via **npm** (Node 24 LTS). Node is copied into the devcontainer image by
+  `.devcontainer/Dockerfile` (not the devcontainers node feature, whose `RUN --mount` build step fails on
+  SELinux-enforcing rootless podman hosts).
+- **Rootless podman hosts (e.g. Fedora Atomic / SELinux).** The stock config builds as is; to run it there, add
+  `--userns=keep-id` and `--security-opt label=disable` (bind-mount write access) in a git-ignored local
+  override, never in `devcontainer.json` (Docker Desktop does not know `keep-id`).
 
 ## Commands
 Two setups (see Environment above): Windows native has no Home Assistant; Linux container / CI has it via
@@ -41,7 +46,8 @@ the opt-in `ha` dependency group.
 | All tests + coverage gate | Linux container / CI | `script/test` |
 | Lint + format check | either | `uv run ruff check .` / `uv run ruff format --check .` (Windows), `script/lint` (Linux container / CI) |
 | Type check | Linux container / CI | `uv run --group ha pyright` |
-| Card tests / build | stage 4 | `npm test` / `npm run build` (in `frontend/`) |
+| Card deps / tests / types | devcontainer / CI (Node 24) | `npm ci` / `npm test` / `npm run typecheck` (in `frontend/`) |
+| Card bundle | devcontainer / CI | `npm run build` (writes the committed bundle) / `npm run check-bundle` (CI) |
 | Run dev HA | devcontainer | `script/develop` |
 | Smoke-test dev HA | devcontainer / CI | `script/smoke-develop` |
 | Open / check devcontainer headlessly | Windows host (Node/npx) | `npx @devcontainers/cli up --workspace-folder .` / `npx @devcontainers/cli exec --workspace-folder . <cmd>` |
@@ -74,7 +80,8 @@ packages reverted by `uv run`.
 Never commit: real entity ids/device names from the author's home, raw statistics exports, HA `config/`
 runtime data, secrets, tokens, IPs/hostnames, local absolute paths (`C:\Users\...`, `D:\...`).
 Task and review files are public too — use generic examples.
-- Card — Vitest with mocked `hass.callWS`.
+- Card — Vitest (happy-dom) with mocked `hass.callWS` (`frontend/test/`); after changing `frontend/src`, run
+  `npm run build` and commit the bundle.
 
 ## Definition of done
 - New behaviour covered by tests written first; all test levels touched by the change are green.
@@ -98,7 +105,7 @@ Task and review files are public too — use generic examples.
   `master`. `.github/workflows/ha-latest-canary.yml` runs weekly (not required) and warns when the next HA
   release would break the latest-HA leg before we bump the pin.
 - **Required checks on `master`:** `lint`, `unit (windows, no HA)`, `test (py3.13, HA 2025.4.0)`,
-  `test (py3.14, HA latest)`, `hassfest`, `hacs` — see `.github/rulesets/master.json`. Renaming a job means
+  `test (py3.14, HA latest)`, `card`, `hassfest`, `hacs` — see `.github/rulesets/master.json`. Renaming a job means
   updating both the workflow `name:` and the ruleset, then re-applying it:
   `gh api --method PUT repos/MrKiirya/ha-energy-cost-stats/rulesets/<id> --input .github/rulesets/master.json`.
 - **Bumping latest HA:** `uv lock --upgrade-package pytest-homeassistant-custom-component` (moves only the

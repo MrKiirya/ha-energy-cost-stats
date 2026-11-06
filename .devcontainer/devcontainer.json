@@ -5,12 +5,6 @@
     "context": "."
   },
   "remoteUser": "vscode",
-  "features": {
-    "ghcr.io/devcontainers/features/node:2": {
-      "version": "24",
-      "pnpmVersion": "none"
-    }
-  },
   "mounts": [
     "source=energy-cost-stats-uv-cache,target=/home/vscode/.cache/uv,type=volume",
     "source=energy-cost-stats-ha-config,target=/home/vscode/.ha-config,type=volume"
@@ -33,7 +27,8 @@
         "ms-python.python",
         "ms-python.vscode-pylance",
         "ms-python.debugpy",
-        "charliermarsh.ruff"
+        "charliermarsh.ruff",
+        "vitest.explorer"
       ],
       "settings": {
         "python.defaultInterpreterPath": "/opt/venv/bin/python",

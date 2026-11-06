@@ -1,9 +1,10 @@
 {
   "domain": "energy_cost_stats",
   "name": "Energy Cost Stats",
+  "after_dependencies": ["frontend"],
   "codeowners": ["@MrKiirya"],
   "config_flow": true,
-  "dependencies": ["recorder"],
+  "dependencies": ["http", "recorder"],
   "documentation": "https://github.com/MrKiirya/ha-energy-cost-stats",
   "integration_type": "service",
   "iot_class": "calculated",
