@@ -1,0 +1,424 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://raw.githubusercontent.com/MrKiirya/ha-energy-cost-stats/master/schema/energy_cost_stats.schema.json",
+  "title": "Energy Cost Stats configuration",
+  "description": "The content of the energy_cost_stats block in the Home Assistant YAML configuration. The schema checks the structure only: keys, types, patterns and the allowed combinations. Rules that need the whole document are checked by the integration when the configuration is loaded and reported as a repair: hours covering the day exactly once, distinct version dates, prices for exactly the zones of the version, applied and compare naming existing tariffs, and existing time zones.",
+  "type": [
+    "object",
+    "null"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "time_zone": {
+      "type": "string",
+      "minLength": 1,
+      "description": "IANA time zone used for tariff zones and daily, weekly and monthly groupings. Default: the existing configuration's time zone, else the Home Assistant time zone.",
+      "examples": [
+        "Europe/Berlin"
+      ]
+    },
+    "spike_limit": {
+      "anyOf": [
+        {
+          "$ref": "#/definitions/decimal"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": "4",
+      "description": "Largest plausible consumption per sensor and hour in kWh. null turns the spike check off."
+    },
+    "panel": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional sidebar entry (stored for the sidebar panel).",
+      "properties": {
+        "show": {
+          "type": "boolean",
+          "default": false,
+          "description": "Show the energy cost panel in the sidebar."
+        },
+        "title": {
+          "type": "string",
+          "pattern": "\\S",
+          "default": "Energy cost",
+          "description": "Sidebar title."
+        },
+        "icon": {
+          "type": "string",
+          "pattern": "\\S",
+          "default": "mdi:cash-multiple",
+          "description": "Sidebar icon."
+        }
+      }
+    },
+    "sensors": {
+      "$ref": "#/definitions/sensors"
+    },
+    "tariffs": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "default": [],
+      "description": "The tariffs. Each has versions that start on a date.",
+      "items": {
+        "$ref": "#/definitions/tariff"
+      }
+    },
+    "applied": {
+      "description": "The tariff in use from each date on. A tariff id as a plain value applies that tariff from its first version.",
+      "oneOf": [
+        {
+          "type": "string",
+          "pattern": "^[a-z0-9_]{1,32}$"
+        },
+        {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/applied_item"
+          }
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "compare": {
+      "type": [
+        "array",
+        "null"
+      ],
+      "items": {
+        "type": "string",
+        "minLength": 1
+      },
+      "description": "Tariff ids shown in the comparison. Default: every tariff that is never applied."
+    }
+  },
+  "definitions": {
+    "decimal": {
+      "description": "A decimal number; strings keep the exact digits and are recommended for prices.",
+      "anyOf": [
+        {
+          "type": "number",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "pattern": "^\\s*[0-9]+(\\.[0-9]+)?([eE][+-]?[0-9]+)?\\s*$"
+        }
+      ]
+    },
+    "date": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "description": "A calendar date, YYYY-MM-DD."
+    },
+    "hours": {
+      "type": "string",
+      "pattern": "^\\s*[0-9]{1,2}:[0-9]{2}\\s*[-–]\\s*[0-9]{1,2}:[0-9]{2}(\\s*[,;]\\s*[0-9]{1,2}:[0-9]{2}\\s*[-–]\\s*[0-9]{1,2}:[0-9]{2})*\\s*$",
+      "description": "Whole hours as HH:MM-HH:MM, several periods separated by commas; 24:00 is the end of the day.",
+      "examples": [
+        "07:00-10:00, 17:00-21:00"
+      ]
+    },
+    "target": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Sensors, devices, areas, floors, labels or entity id patterns; an entity matches when any of them applies.",
+      "properties": {
+        "entity_id": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Entity ids of energy sensors, e.g. sensor.plug_01_energy."
+        },
+        "device_id": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Device ids (the long hexadecimal ids of the device registry)."
+        },
+        "area_id": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Area ids, e.g. kitchen."
+        },
+        "floor_id": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Floor ids."
+        },
+        "label_id": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Label ids."
+        },
+        "entity_globs": {
+          "type": "array",
+          "uniqueItems": true,
+          "description": "Entity id patterns with * ? [ ] and !, matched against the whole entity id, e.g. sensor.*_plug_*_energy.",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^[a-z0-9_.*?\\[\\]!-]+$"
+          }
+        }
+      }
+    },
+    "sensors": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode"
+      ],
+      "description": "Which energy sensors are in the calculation.",
+      "properties": {
+        "mode": {
+          "enum": [
+            "energy_dashboard",
+            "filter"
+          ],
+          "description": "energy_dashboard takes the individual devices of the Energy dashboard; filter selects sensors by the rules below."
+        },
+        "include": {
+          "description": "Filter mode only: all (every eligible energy sensor, the default) or a target.",
+          "oneOf": [
+            {
+              "const": "all"
+            },
+            {
+              "$ref": "#/definitions/target"
+            }
+          ]
+        },
+        "exclude": {
+          "description": "Sensors that are never included, in both modes.",
+          "$ref": "#/definitions/target"
+        },
+        "overrides": {
+          "type": "object",
+          "description": "Per-sensor parameters, keyed by entity id.",
+          "additionalProperties": {
+            "$ref": "#/definitions/override"
+          }
+        }
+      },
+      "if": {
+        "properties": {
+          "mode": {
+            "const": "energy_dashboard"
+          }
+        },
+        "required": [
+          "mode"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "include"
+          ]
+        }
+      }
+    },
+    "override": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "spike_limit": {
+          "anyOf": [
+            {
+              "$ref": "#/definitions/decimal"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Spike limit of this sensor in kWh per hour; null turns the check off for it."
+        }
+      }
+    },
+    "tariff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "versions"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]{1,32}$",
+          "description": "Stable id (a-z, 0-9 and _, 1 to 32 characters) used by applied and compare."
+        },
+        "name": {
+          "type": "string",
+          "pattern": "\\S",
+          "description": "Display name."
+        },
+        "versions": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Price periods of the tariff, each starting on its valid_from date.",
+          "items": {
+            "$ref": "#/definitions/version"
+          }
+        }
+      }
+    },
+    "version": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "valid_from"
+      ],
+      "description": "The first version needs preset or zones; a later version without either inherits the zones of the version before.",
+      "properties": {
+        "valid_from": {
+          "$ref": "#/definitions/date"
+        },
+        "preset": {
+          "enum": [
+            "single_rate",
+            "ru_two_zone",
+            "ru_three_zone"
+          ],
+          "description": "A ready-made zone layout; prices are required."
+        },
+        "zones": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Explicit zones instead of a preset.",
+          "items": {
+            "$ref": "#/definitions/zone"
+          }
+        },
+        "prices": {
+          "type": "object",
+          "description": "Price per kWh for each zone key.",
+          "additionalProperties": {
+            "$ref": "#/definitions/decimal"
+          }
+        },
+        "hours": {
+          "type": "object",
+          "description": "Per-zone hours that replace the hours of the preset or of the version before.",
+          "additionalProperties": {
+            "$ref": "#/definitions/hours"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "not": {
+            "required": [
+              "preset",
+              "zones"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "zones"
+            ]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {
+                  "required": [
+                    "prices"
+                  ]
+                },
+                {
+                  "required": [
+                    "hours"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "preset"
+            ]
+          },
+          "then": {
+            "required": [
+              "prices"
+            ]
+          }
+        }
+      ]
+    },
+    "zone": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "key",
+        "name",
+        "price",
+        "hours"
+      ],
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Stable zone key, e.g. t1 (day or peak), t2 (night), t3 (semi-peak), t0 (single rate)."
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name of the zone."
+        },
+        "price": {
+          "$ref": "#/definitions/decimal"
+        },
+        "hours": {
+          "$ref": "#/definitions/hours"
+        }
+      }
+    },
+    "applied_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "from",
+        "tariff"
+      ],
+      "properties": {
+        "from": {
+          "$ref": "#/definitions/date"
+        },
+        "tariff": {
+          "type": "string",
+          "pattern": "^[a-z0-9_]{1,32}$"
+        }
+      }
+    }
+  }
+}
