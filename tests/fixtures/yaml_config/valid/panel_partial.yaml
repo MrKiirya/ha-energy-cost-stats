@@ -1,0 +1,3 @@
+# A partial panel block: the other keys take their defaults.
+panel:
+  show: true

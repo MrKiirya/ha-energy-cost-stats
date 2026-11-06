@@ -1,0 +1,5 @@
+# An unknown key inside sensors.include.
+sensors:
+  mode: filter
+  include:
+    zone_id: [a]

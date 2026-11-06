@@ -1,0 +1,3 @@
+# An unknown key inside an applied item.
+applied:
+  - { from: 2026-01-01, tariff: flat, until: 2027-01-01 }

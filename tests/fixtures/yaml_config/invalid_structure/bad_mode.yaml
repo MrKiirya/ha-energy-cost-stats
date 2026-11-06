@@ -1,0 +1,3 @@
+# An unknown sensor selection mode.
+sensors:
+  mode: everything

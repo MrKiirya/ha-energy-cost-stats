@@ -71,6 +71,43 @@ three-zone residential tariffs.
   applied but tariffs do, the first remaining tariff is applied from its first version; no tariffs left means
   nothing applied) and from an explicit `compare` list; the first tariff added to an entry without tariffs is applied
   from its first version.
+- **YAML mode** (task 021). An `energy_cost_stats:` block in `configuration.yaml` (or a package, or a file pulled
+  in with `!include`) with exactly the document shape the UI edits (docs/CONFIG-DESIGN.md "Full configuration
+  (YAML)") makes YAML the single source of truth. The block is **imported into the config entry**, not read beside
+  it: it is validated strictly (`yaml_config.document_from_yaml`, which normalizes and then runs
+  `settings_from_options` and `config_from_data`), then written as the entry options and one `tariff` subentry per
+  tariff (matched by tariff id: updated, added, removed), so reports, websocket, service and card keep one code
+  path and the integration page lists the YAML tariffs. There is no entry version bump. YAML mode is a runtime
+  flag (block present at the last load), not stored.
+  - Top-level keys: `time_zone` (default: the existing entry's, else the Home Assistant time zone), `spike_limit`
+    (default `4`, `null` = off), `panel`, `sensors` (default: the first-setup rule evaluated at each load; in
+    `filter` mode a missing `include` means `all`, `exclude` / `overrides` default to empty), `tariffs`, `applied`
+    (list, or `applied: <id>` = from that tariff's first version), `compare`. Unknown keys are errors. An empty
+    block is valid (all defaults, no tariffs).
+  - **Applying.** At startup (`async_setup`) and by the admin action `energy_cost_stats.reload` (no fields; also
+    listed in Developer tools, YAML; registered even without a block, so a block added later is picked up without a
+    restart; it re-reads `configuration.yaml` with `async_integration_yaml_config`). A new block with no entry
+    starts an `import` config flow (`async_step_import` creates the entry with the options); an existing entry is
+    synced in `async_setup_entry` before its options are parsed (and reloaded after a reload action). The first
+    replacement of a configuration made in the UI logs a warning; use **Export to YAML** first to keep a copy.
+    Removing the block and reloading leaves the last YAML values in the entry and makes it editable in the UI.
+  - **Invalid block** (syntax, unknown key, failed validation, unknown time zone). `CONFIG_SCHEMA` is deliberately
+    lenient (`{Optional(DOMAIN): object}`, extra keys allowed): when it raises, Home Assistant skips `async_setup`
+    and the config entries of the domain altogether (§6). The integration keeps running with the last valid
+    configuration; the error is shown as the repair issue `invalid_yaml` (not fixable, re-created on every failed
+    load), in the log, in the options flow, and for a reload as the action error (`yaml_invalid`). Fixing the block
+    and running the action clears the issue. While the block is invalid the update listener keeps the usual options
+    reconciliation, so deleting a tariff on the integration page does not break the entry; the next valid load
+    restores the tariff from YAML.
+  - **Read-only UI.** `async_step_user` and the tariff subentry flows abort with `yaml_mode`; the options flow opens
+    the menu `yaml_mode` (time zone, spike limit, compared tariffs, sidebar and the last load error in the
+    description) with `sensors_view`, `applied_view` (the resolved selection and the history table) and
+    `export_yaml`; no step writes options. The update listener skips the options reconciliation in YAML mode and
+    only reloads, so a tariff subentry deleted from the integration page comes back.
+  - **Export to YAML** (options menu in both modes): `yaml_config.export_document` + `homeassistant.util.yaml.dump`
+    render the stored configuration as an `energy_cost_stats:` block in the step description (key order
+    `time_zone`, `spike_limit`, `panel`, `sensors`, `tariffs`, `applied`, `compare`; dates unquoted, prices and
+    limits quoted strings). The block loads back to identical options and tariffs.
 - **Sensor selection** (`entry.options["sensors"]`, `engine/sensors.py` + `sensor_resolver.py`), resolved on every
   request, so new eligible sensors need no reconfiguration:
 
@@ -177,6 +214,11 @@ Rules (parsing is strict: unknown keys, wrong types and bad dates raise `TariffV
   unpriced). `compare` lists tariff ids; default = all tariffs that never appear in `applied`.
 - **Prices** are decimal strings in the document (scale kept, no exponent; money never passes through `float`);
   numbers are accepted only by the YAML layer (task 021), which converts them.
+- **YAML conversions** (`yaml_config.py`). Decimal fields (`spike_limit`, override `spike_limit`, version `prices`,
+  zone `price`) accept `int` / `float` (not `bool`) and become decimal strings (`8.1` -> `"8.1"`, `1e-05` ->
+  `"0.00001"`); strings are kept. Date fields (`valid_from`, `applied[].from`) accept a `datetime.date` (what the
+  Home Assistant YAML loader returns for an unquoted `2026-01-01`) or a `YYYY-MM-DD` string and are stored as ISO
+  strings; a `datetime` is an error. Nothing else is coerced.
 
 Storage: one config subentry of type `tariff` per tariff, with `unique_id` = `id`, title = `name` and data = the
 tariff's document (presets kept as written, so the forms and the YAML export show what the user entered).
@@ -461,6 +503,11 @@ of looking green.
 | `StatisticMeanType` / `mean_type` in metadata | 2025.4 | Writing external statistics (stage 2). |
 | `unit_class` in statistics metadata | 2025.11 | Adapter passes it only when supported. |
 | `has_mean` removed; `mean_type` + `unit_class` mandatory for writes | 2026.11 | Adapter must already comply. |
+| Invalid `CONFIG_SCHEMA` aborts the integration | ≤ 2025.4 | `setup.py` returns before `async_setup` and before the config entries are set up when the processed config is `None`, hence the lenient schema and our own validation (§2, YAML mode). |
+| `helpers.reload.async_integration_yaml_config` | ≤ 2025.4 | Re-reads `configuration.yaml` through the integration's `CONFIG_SCHEMA`; identical at 2025.4.0 and `dev`. Used by the `reload` action (`async_setup_reload_service` is for platform integrations and is not used). |
+| `helpers.service.async_register_admin_service` | ≤ 2025.4 | The `reload` action; raises `Unauthorized` for non-admin users. |
+| Issue registry (`async_create_issue` / `async_delete_issue`) | ≤ 2025.4 | The `invalid_yaml` repair (informational, not persistent). |
+| `homeassistant.util.yaml` (`dump`, `parse_yaml`) | ≤ 2025.4 | Export renders and tests parse; the loader returns `date` for unquoted dates and `float` for unquoted prices (asserted by a test). |
 
 Reading metadata: ignore unknown fields (`mean_type`, `unit_class`, deprecated `has_mean`).
 The `statistics_during_period` and `get_metadata` parameters were verified identical at 2025.4.0 and `dev` on
@@ -468,6 +515,37 @@ The `statistics_during_period` and `get_metadata` parameters were verified ident
 [statistics.py @dev](https://github.com/home-assistant/core/blob/dev/homeassistant/components/recorder/statistics.py).
 The adapter calls them with keyword arguments.
 Reference: https://developers.home-assistant.io/blog/2025/10/16/recorder-statistics-api-changes/
+
+### 6.1 JSON Schema of the YAML block
+`schema/energy_cost_stats.schema.json` (repository root, committed, not shipped inside `custom_components/`) is a
+hand-written **draft-07** JSON Schema of the **content** of the `energy_cost_stats:` block, so it applies directly to
+a file pulled in with `!include`. `$id` is the raw URL on `master`; for a schema matching an installed release use
+the tag instead: `https://raw.githubusercontent.com/MrKiirya/ha-energy-cost-stats/v<version>/schema/energy_cost_stats.schema.json`.
+
+To use it in an editor with the YAML extension (yaml-language-server; Studio Code Server), keep the block in its own
+file, because a modeline applies to the whole file:
+
+```yaml
+# configuration.yaml
+energy_cost_stats: !include energy_cost_stats.yaml
+```
+```yaml
+# energy_cost_stats.yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/MrKiirya/ha-energy-cost-stats/master/schema/energy_cost_stats.schema.json
+time_zone: Europe/Berlin
+tariffs: []
+```
+
+`!secret` / `!include` inside the file need the editor setting `yaml.customTags` (for example `"!secret scalar"`)
+or the extension reports unknown tags. The schema checks **structure only** (keys, types, required keys, enums,
+patterns for tariff ids, dates, globs and hours, `include` only in `filter` mode, `preset` xor `zones`); rules that
+need the whole document stay in the engine and are reported as a repair at load time. Prices and limits accept
+numbers and strings, dates are strings (unquoted dates are strings in YAML 1.2).
+It is written by hand because the real rules live in imperative parsers and `CONFIG_SCHEMA` is lenient; drift is
+prevented by tests: a shared fixture corpus (`tests/fixtures/yaml_config/{valid,invalid_structure,invalid_semantic}`)
+that must be accepted / rejected by both the schema and `document_from_yaml`, a key-coverage test comparing
+`yaml_config.ACCEPTED_KEYS` with the schema in both directions, enum coverage (modes, presets), and a check that
+every Export validates (`tests/integration/test_yaml_schema_sync.py`, `tests/unit/test_config_schema.py`).
 
 ## 7. Prior art (studied, don't reinvent — borrow ideas)
 - `MacSiem/ha-smart-reports` — best statistics handling (local-calendar windows, DST, partial-data states,

@@ -24,10 +24,10 @@ _ID_RE = re.compile(r"[a-z0-9_]{1,32}")
 _DATE_RE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", re.ASCII)
 
 _DOC_KEYS = frozenset({"tariffs", "applied", "compare"})
-_TARIFF_KEYS = frozenset({"id", "name", "versions"})
-_VERSION_KEYS = frozenset({"valid_from", "preset", "zones", "prices", "hours"})
-_ZONE_KEYS = frozenset({"key", "name", "price", "hours"})
-_APPLIED_KEYS = frozenset({"from", "tariff"})
+TARIFF_KEYS = frozenset({"id", "name", "versions"})
+VERSION_KEYS = frozenset({"valid_from", "preset", "zones", "prices", "hours"})
+ZONE_KEYS = frozenset({"key", "name", "price", "hours"})
+APPLIED_KEYS = frozenset({"from", "tariff"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -208,8 +208,8 @@ def _explicit_zones(raw: Any) -> tuple[Zone, ...]:
     zones: list[Zone] = []
     for item in _list(raw, "zones"):
         zone = _mapping(item, "zone")
-        _check_keys(zone, _ZONE_KEYS, "zone")
-        missing = sorted(_ZONE_KEYS - zone.keys())
+        _check_keys(zone, ZONE_KEYS, "zone")
+        missing = sorted(ZONE_KEYS - zone.keys())
         if missing:
             raise _fail(f"zone: missing keys {', '.join(missing)}")
         key = _text(zone["key"], "zone key")
@@ -254,8 +254,8 @@ def _version_zones(
 
 def _tariff(data: Any) -> Tariff:
     raw = _mapping(data, "tariff")
-    _check_keys(raw, _TARIFF_KEYS, "tariff")
-    missing = sorted(_TARIFF_KEYS - raw.keys())
+    _check_keys(raw, TARIFF_KEYS, "tariff")
+    missing = sorted(TARIFF_KEYS - raw.keys())
     if missing:
         raise _fail(f"tariff: missing keys {', '.join(missing)}")
     tariff_id = _text(raw["id"], "tariff id")
@@ -271,7 +271,7 @@ def _tariff(data: Any) -> Tariff:
     parsed: list[tuple[date, Mapping[str, Any]]] = []
     for item in items:
         version = _mapping(item, "version")
-        _check_keys(version, _VERSION_KEYS, "version")
+        _check_keys(version, VERSION_KEYS, "version")
         if "valid_from" not in version:
             raise _fail("version: missing keys valid_from")
         parsed.append((_date(version["valid_from"], "valid_from"), version))
@@ -304,8 +304,8 @@ def _applied(raw: Any, tariffs: Mapping[str, Tariff]) -> tuple[AppliedChange, ..
     else:
         for item in _list(raw, "applied"):
             entry = _mapping(item, "applied item")
-            _check_keys(entry, _APPLIED_KEYS, "applied item")
-            missing = sorted(_APPLIED_KEYS - entry.keys())
+            _check_keys(entry, APPLIED_KEYS, "applied item")
+            missing = sorted(APPLIED_KEYS - entry.keys())
             if missing:
                 raise _fail(f"applied item: missing keys {', '.join(missing)}")
             tariff_id = _text(entry["tariff"], "applied tariff")

@@ -1,0 +1,8 @@
+# A tariff id with upper-case letters.
+tariffs:
+  - id: Flat
+    name: Flat
+    versions:
+      - valid_from: 2026-01-01
+        preset: single_rate
+        prices: { t0: "7.40" }

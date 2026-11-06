@@ -1,0 +1,5 @@
+# A glob with characters that are not allowed.
+sensors:
+  mode: filter
+  exclude:
+    entity_globs: ["Sensor.*"]

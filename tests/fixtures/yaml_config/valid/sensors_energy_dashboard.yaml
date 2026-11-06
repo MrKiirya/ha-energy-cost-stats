@@ -1,0 +1,8 @@
+# Sensors from the Energy dashboard, with an exclusion and a per-sensor limit.
+sensors:
+  mode: energy_dashboard
+  exclude:
+    entity_id: [sensor.meter_t1]
+  overrides:
+    sensor.plug_01_energy:
+      spike_limit: 6

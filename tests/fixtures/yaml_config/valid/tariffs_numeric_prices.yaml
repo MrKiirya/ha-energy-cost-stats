@@ -1,0 +1,10 @@
+# Unquoted numbers as prices are accepted and stored as decimal strings.
+tariffs:
+  - id: flat
+    name: Flat
+    versions:
+      - valid_from: "2026-01-01"
+        preset: single_rate
+        prices: { t0: 7.4 }
+      - valid_from: 2026-06-01
+        prices: { t0: 8 }

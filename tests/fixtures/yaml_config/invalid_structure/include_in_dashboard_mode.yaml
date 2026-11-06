@@ -1,0 +1,4 @@
+# include is only allowed in filter mode.
+sensors:
+  mode: energy_dashboard
+  include: all

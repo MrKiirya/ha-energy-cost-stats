@@ -1,0 +1,4 @@
+# An unknown key inside sensors.
+sensors:
+  mode: filter
+  limit: 3

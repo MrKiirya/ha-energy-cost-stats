@@ -284,6 +284,7 @@ def test_all_error_codes_translated():
         "period_too_long",
         "unknown_entity",
         "unknown_tariff",
+        "yaml_invalid",
     }
     service = STRINGS["services"]["get_report"]
     assert {"name", "description"} <= set(service)

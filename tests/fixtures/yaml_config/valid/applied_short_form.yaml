@@ -1,0 +1,9 @@
+# The short form of applied names one tariff.
+tariffs:
+  - id: flat
+    name: Flat
+    versions:
+      - valid_from: 2026-01-01
+        preset: single_rate
+        prices: { t0: "7.40" }
+applied: flat

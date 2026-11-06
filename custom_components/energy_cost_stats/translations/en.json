@@ -17,7 +17,8 @@
       }
     },
     "abort": {
-      "single_instance_allowed": "Energy Cost Stats is already configured. Only one instance is allowed."
+      "single_instance_allowed": "Energy Cost Stats is already configured. Only one instance is allowed.",
+      "yaml_mode": "Energy Cost Stats is configured in YAML (configuration.yaml). Fix the energy_cost_stats block and run the reload action, or remove the block to configure the integration here."
     },
     "error": {
       "invalid_limit": "The spike limit must be a number greater than 0."
@@ -32,7 +33,8 @@
           "sensors": "Sensors",
           "applied": "Applied tariffs",
           "compare": "Tariff comparison",
-          "general": "General settings"
+          "general": "General settings",
+          "export_yaml": "Export to YAML"
         }
       },
       "sensors": {
@@ -170,6 +172,36 @@
           "use_default": "Compare every tariff that is not in the applied history.",
           "tariffs": "Used when the default set is off."
         }
+      },
+      "yaml_mode": {
+        "title": "Configured in YAML",
+        "description": "The configuration comes from the energy_cost_stats block in configuration.yaml and cannot be changed here. Edit the file and run the action `energy_cost_stats.reload` (Developer tools, YAML) to apply it without a restart.\n\n- Time zone: {time_zone}\n- Spike limit: {spike_limit}\n- Compared tariffs: {compare}\n- Sidebar: {sidebar}\n\nError of the last load, if any: {error}",
+        "menu_options": {
+          "sensors_view": "Sensors",
+          "applied_view": "Applied tariffs",
+          "export_yaml": "Export to YAML"
+        }
+      },
+      "sensors_view": {
+        "title": "Sensors",
+        "description": "{count} sensors in the calculation (selection configured in YAML).\n\n{sensors}",
+        "menu_options": {
+          "yaml_mode": "Back"
+        }
+      },
+      "applied_view": {
+        "title": "Applied tariffs",
+        "description": "The tariff in use from each date on (configured in YAML). Hours before the first date are not priced.\n\n| From | Tariff |\n|---|---|\n{history}",
+        "menu_options": {
+          "yaml_mode": "Back"
+        }
+      },
+      "export_yaml": {
+        "title": "Export to YAML",
+        "description": "The current configuration as a YAML block. Select and copy it. Pasting it into configuration.yaml (or a file included from there) switches the integration to YAML mode, where the file is the only source of the configuration. Editors can validate and complete the block with the schema at {schema_url}.\n\n```yaml\n{yaml}```",
+        "menu_options": {
+          "init": "Back"
+        }
       }
     },
     "error": {
@@ -187,7 +219,8 @@
     "abort": {
       "invalid_options": "The stored options are invalid. Remove and add the integration again.",
       "no_tariffs": "Add a tariff first.",
-      "no_sensors": "There are no sensors to set limits for."
+      "no_sensors": "There are no sensors to set limits for.",
+      "yaml_mode": "The configuration is managed in YAML and cannot be changed here."
     }
   },
   "config_subentries": {
@@ -546,7 +579,8 @@
       },
       "abort": {
         "reconfigure_successful": "The tariff was updated.",
-        "invalid_stored_tariff": "The stored tariff is invalid. Delete it and add it again."
+        "invalid_stored_tariff": "The stored tariff is invalid. Delete it and add it again.",
+        "yaml_mode": "The tariffs are configured in YAML. Edit the energy_cost_stats block in configuration.yaml and run the reload action."
       }
     }
   },
@@ -598,6 +632,10 @@
           "description": "Configured energy sensors to include, in the order given. Leave empty for all configured sensors."
         }
       }
+    },
+    "reload": {
+      "name": "Reload YAML configuration",
+      "description": "Reads the energy_cost_stats block from configuration.yaml again and applies it without a restart. An invalid block is reported as a repair and the previous configuration keeps running."
     }
   },
   "exceptions": {
@@ -615,6 +653,15 @@
     },
     "unknown_tariff": {
       "message": "{tariff_id} is not a configured tariff."
+    },
+    "yaml_invalid": {
+      "message": "The energy_cost_stats configuration is invalid: {error}"
+    }
+  },
+  "issues": {
+    "invalid_yaml": {
+      "title": "Invalid Energy Cost Stats configuration",
+      "description": "The energy_cost_stats block in the YAML configuration is invalid, so the previous configuration keeps running.\n\n{error}\n\nFix the block and run the action `energy_cost_stats.reload`, or restart Home Assistant."
     }
   }
 }

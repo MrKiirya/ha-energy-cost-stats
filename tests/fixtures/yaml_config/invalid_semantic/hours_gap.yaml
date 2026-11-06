@@ -1,0 +1,9 @@
+# Zone hours that leave a gap.
+tariffs:
+  - id: two
+    name: Two
+    versions:
+      - valid_from: 2026-01-01
+        zones:
+          - { key: t1, name: Day, price: "8", hours: "07:00-20:00" }
+          - { key: t2, name: Night, price: "3", hours: "23:00-07:00" }

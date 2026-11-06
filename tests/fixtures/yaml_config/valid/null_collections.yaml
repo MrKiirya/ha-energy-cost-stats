@@ -1,0 +1,4 @@
+# Bare tariffs, applied and compare keys (YAML null) are treated as absent.
+tariffs:
+applied:
+compare:
