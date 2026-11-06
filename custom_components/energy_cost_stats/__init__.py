@@ -8,7 +8,9 @@ update listener, which first reconciles the tariff subentries with the options (
 ``_async_reconcile``). Entries of version 1 (``tariff_plan`` subentries) are migrated.
 The websocket command and the response-only service are registered once in
 ``async_setup``; they read the loaded entry. ``async_setup`` also serves the
-Lovelace card bundle (``frontend.py``). No entities or platforms are created.
+Lovelace card bundle (``frontend.py``) and loads the optional YAML block
+(``yaml_mode.py``), which is written into the entry on setup. No entities or platforms
+are created.
 """
 
 import asyncio
@@ -18,7 +20,7 @@ from datetime import tzinfo
 from types import MappingProxyType
 from typing import Any
 
-import homeassistant.helpers.config_validation as cv
+import voluptuous as vol
 from homeassistant.config_entries import ConfigEntry, ConfigSubentry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryError
@@ -48,10 +50,19 @@ from .settings import (
     tariff_document,
 )
 from .websocket import async_register_websocket
+from .yaml_mode import (
+    async_apply_yaml_state,
+    async_load_yaml_state,
+    async_register_reload_service,
+    async_sync_entry,
+    get_yaml_state,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
-CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
+# Lenient on purpose: an invalid CONFIG_SCHEMA makes Home Assistant skip async_setup and
+# the config entries of the domain. The block is validated in yaml_mode (repair issue).
+CONFIG_SCHEMA = vol.Schema({vol.Optional(DOMAIN): object}, extra=vol.ALLOW_EXTRA)
 
 
 @dataclass
@@ -68,17 +79,23 @@ type EnergyCostStatsConfigEntry = ConfigEntry[RuntimeData]
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Register the websocket command, the service and the card (no entities)."""
+    """Register the websocket command, services and card; apply the YAML block."""
     async_register_websocket(hass)
     async_register_services(hass)
+    async_register_reload_service(hass)
     await async_register_card(hass)
+    state = await async_load_yaml_state(hass, config)
+    await async_apply_yaml_state(hass, state, startup=True)
     return True
 
 
 async def async_setup_entry(
     hass: HomeAssistant, entry: EnergyCostStatsConfigEntry
 ) -> bool:
-    """Set up the config entry from its options."""
+    """Set up the config entry from its options (first synced from the YAML block)."""
+    yaml_state = get_yaml_state(hass)
+    if yaml_state.document is not None:
+        async_sync_entry(hass, entry, yaml_state.document)
     try:
         settings = settings_from_options(entry.options)
     except SettingsError as err:
@@ -269,6 +286,8 @@ async def _async_update_listener(
     sees both changes.
     """
     await asyncio.sleep(0)
-    if _async_reconcile(hass, entry):
+    # With a valid YAML document the reload re-syncs from it; otherwise (UI mode or an
+    # invalid block) the options are brought in line with the tariffs that exist.
+    if get_yaml_state(hass).document is None and _async_reconcile(hass, entry):
         return
     await hass.config_entries.async_reload(entry.entry_id)

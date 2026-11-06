@@ -30,3 +30,5 @@ get_report:
           filter:
             domain: sensor
             device_class: energy
+
+reload:

@@ -35,7 +35,7 @@ from .engine.sensors import (
     is_valid_glob,
 )
 
-_KNOWN_KEYS = frozenset(
+OPTION_KEYS = frozenset(
     {
         CONF_TIME_ZONE,
         CONF_SPIKE_LIMIT,
@@ -226,7 +226,7 @@ def _parse_panel(raw: Any) -> PanelSettings:
 
 def settings_from_options(options: Mapping[str, Any]) -> IntegrationSettings:
     """Parse ``entry.options``; raise ``SettingsError`` on anything unexpected."""
-    unknown = set(options) - _KNOWN_KEYS
+    unknown = set(options) - OPTION_KEYS
     if unknown:
         raise SettingsError(f"Unknown option keys: {sorted(unknown)}")
 

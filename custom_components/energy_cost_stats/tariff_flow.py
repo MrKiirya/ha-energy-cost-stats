@@ -40,6 +40,7 @@ from homeassistant.util import dt as dt_util
 from homeassistant.util import slugify
 
 from .const import (
+    ABORT_YAML_MODE,
     BASE_COPY,
     BASE_CUSTOM,
     BASE_SINGLE_RATE,
@@ -76,6 +77,7 @@ from .engine.tariff_edit import (
     unique_tariff_id,
     versions_table,
 )
+from .yaml_mode import is_yaml_mode
 
 _ID_RE = re.compile(r"[a-z0-9_]{1,32}")
 _PRESET_BASES = (BASE_SINGLE_RATE, BASE_TWO_ZONE, BASE_THREE_ZONE)
@@ -343,6 +345,8 @@ class TariffSubentryFlow(ConfigSubentryFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         """Name and base of the new tariff."""
+        if is_yaml_mode(self.hass):
+            return self.async_abort(reason=ABORT_YAML_MODE)
         errors: dict[str, str] = {}
         has_tariffs = bool(self._tariff_subentries())
         if user_input is not None:
@@ -578,6 +582,8 @@ class TariffSubentryFlow(ConfigSubentryFlow):
         self, user_input: dict[str, Any] | None = None
     ) -> SubentryFlowResult:
         """The tariff menu."""
+        if is_yaml_mode(self.hass):
+            return self.async_abort(reason=ABORT_YAML_MODE)
         try:
             _, tariff = self._reconfigure_context()
         except TariffValidationError:

@@ -42,7 +42,23 @@ DEFAULT_PANEL_TITLE: Final = "Energy cost"
 DEFAULT_PANEL_ICON: Final = "mdi:cash-multiple"
 
 # Options menu step ids.
-MENU_STEPS: Final = ("sensors", "applied", "compare", "general")
+MENU_STEPS: Final = ("sensors", "applied", "compare", "general", "export_yaml")
+# Options steps of the read-only YAML mode (docs/SPEC.md §2).
+STEP_YAML_MODE: Final = "yaml_mode"
+STEP_SENSORS_VIEW: Final = "sensors_view"
+STEP_APPLIED_VIEW: Final = "applied_view"
+STEP_EXPORT_YAML: Final = "export_yaml"
+YAML_MODE_STEPS: Final = (STEP_SENSORS_VIEW, STEP_APPLIED_VIEW, STEP_EXPORT_YAML)
+
+# YAML mode: the reload action, the repair issue and the schema of the block.
+SERVICE_RELOAD: Final = "reload"
+ISSUE_INVALID_YAML: Final = "invalid_yaml"
+ERR_YAML_INVALID: Final = "yaml_invalid"
+ABORT_YAML_MODE: Final = "yaml_mode"
+SCHEMA_URL: Final = (
+    "https://raw.githubusercontent.com/MrKiirya/ha-energy-cost-stats/master/"
+    "schema/energy_cost_stats.schema.json"
+)
 
 # Sensor selection (docs/SPEC.md §2): stored values and target keys.
 MODE_ENERGY_DASHBOARD: Final = "energy_dashboard"

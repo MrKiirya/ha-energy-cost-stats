@@ -39,6 +39,7 @@ from homeassistant.util import dt as dt_util
 
 from . import EnergyCostStatsConfigEntry
 from .const import (
+    ABORT_YAML_MODE,
     CONF_ALL,
     CONF_CHANGE,
     CONF_DELETE,
@@ -68,8 +69,14 @@ from .const import (
     MENU_STEPS,
     MODE_ENERGY_DASHBOARD,
     MODE_FILTER,
+    SCHEMA_URL,
+    STEP_APPLIED_VIEW,
+    STEP_EXPORT_YAML,
+    STEP_SENSORS_VIEW,
+    STEP_YAML_MODE,
     SUBENTRY_TYPE_TARIFF,
     TARGET_KEYS,
+    YAML_MODE_STEPS,
 )
 from .engine.sensors import (
     SensorMode,
@@ -100,6 +107,7 @@ from .settings import (
     tariff_document,
 )
 from .tariff_flow import TariffSubentryFlow
+from .yaml_mode import get_yaml_state, is_yaml_mode, render_yaml
 
 _ENERGY = "energy"
 _KEYWORDS = frozenset({"all", "none"})
@@ -125,6 +133,10 @@ def _device_limit_selector() -> NumberSelector:
             unit_of_measurement="kWh",
         )
     )
+
+
+def _format(value: Decimal) -> str:
+    return format(value.normalize(), "f")
 
 
 def _to_decimal(value: float | int | str) -> Decimal:
@@ -193,10 +205,18 @@ class EnergyCostStatsConfigFlow(ConfigFlow, domain=DOMAIN):
         """Tariffs are config subentries (docs/SPEC.md §3)."""
         return {SUBENTRY_TYPE_TARIFF: TariffSubentryFlow}
 
+    async def async_step_import(self, import_data: dict[str, Any]) -> ConfigFlowResult:
+        """Create the entry from the validated YAML block (docs/SPEC.md §2)."""
+        return self.async_create_entry(
+            title=DEFAULT_TITLE, data={}, options=import_data
+        )
+
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
         """Ask for the time zone and the spike limit."""
+        if is_yaml_mode(self.hass):
+            return self.async_abort(reason=ABORT_YAML_MODE)
         errors: dict[str, str] = {}
         if user_input is not None:
             limit, valid = _global_limit_from_input(user_input, None)
@@ -332,12 +352,99 @@ class EnergyCostStatsOptionsFlow(OptionsFlow):
     async def async_step_init(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Show the options menu."""
+        """Show the options menu (read-only in YAML mode)."""
         try:
             self._load()
         except _Abort as err:
             return self.async_abort(reason=err.reason)
+        if is_yaml_mode(self.hass):
+            return await self.async_step_yaml_mode()
         return self.async_show_menu(step_id="init", menu_options=list(MENU_STEPS))
+
+    # ---- YAML mode (read-only) and export ------------------------------------------
+
+    async def async_step_yaml_mode(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """The configuration lives in YAML: a read-only summary and views."""
+        try:
+            current = self._load()
+        except _Abort as err:
+            return self.async_abort(reason=err.reason)
+        names = {tariff.id: tariff.name for tariff in self._tariffs()}
+        if current.compare is None:
+            compare = "-"
+        else:
+            compare = (
+                ", ".join(names.get(item, item) for item in current.compare) or "-"
+            )
+        panel = current.panel
+        return self.async_show_menu(
+            step_id=STEP_YAML_MODE,
+            menu_options=list(YAML_MODE_STEPS),
+            description_placeholders={
+                "time_zone": current.time_zone,
+                "spike_limit": (
+                    "off"
+                    if current.spike_limit is None
+                    else _format(current.spike_limit)
+                ),
+                "compare": compare,
+                "sidebar": (
+                    "-"
+                    if panel is None
+                    else f"{panel.title} ({'shown' if panel.show else 'hidden'})"
+                ),
+                "error": get_yaml_state(self.hass).error or "",
+            },
+        )
+
+    async def async_step_sensors_view(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """The resolved sensor selection, read-only."""
+        try:
+            current = self._load()
+        except _Abort as err:
+            return self.async_abort(reason=err.reason)
+        selection = await async_resolve_sensors(self.hass, current.sensors)
+        count, listing = describe_selection(self.hass, selection)
+        return self.async_show_menu(
+            step_id=STEP_SENSORS_VIEW,
+            menu_options=[STEP_YAML_MODE],
+            description_placeholders={"count": str(count), "sensors": listing},
+        )
+
+    async def async_step_applied_view(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """The applied tariff history, read-only."""
+        try:
+            current = self._load()
+        except _Abort as err:
+            return self.async_abort(reason=err.reason)
+        return self.async_show_menu(
+            step_id=STEP_APPLIED_VIEW,
+            menu_options=[STEP_YAML_MODE],
+            description_placeholders={"history": self._history_rows(current)},
+        )
+
+    async def async_step_export_yaml(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """The current configuration as an ``energy_cost_stats:`` block."""
+        try:
+            self._load()
+        except _Abort as err:
+            return self.async_abort(reason=err.reason)
+        return self.async_show_menu(
+            step_id=STEP_EXPORT_YAML,
+            menu_options=["init"],
+            description_placeholders={
+                "yaml": render_yaml(self.config_entry.options, self._tariff_data()),
+                "schema_url": SCHEMA_URL,
+            },
+        )
 
     # ---- sensors ---------------------------------------------------------------
 
