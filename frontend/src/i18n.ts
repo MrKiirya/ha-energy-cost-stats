@@ -73,6 +73,9 @@ const EN = {
   "preset.single_rate": "Single-rate",
   "preset.ru_two_zone": "Two-zone",
   "preset.ru_three_zone": "Three-zone",
+  energy_picker_followed: "Period from the Energy date picker on this dashboard",
+  energy_picker_missing:
+    "No Energy date picker on this dashboard: add the \"Energy date selection\" card or set period_source: card.",
   "zone.t0": "Single",
   "zone.t1": "Day",
   "zone.t1.peak": "Peak",
@@ -154,6 +157,9 @@ const RU: Record<StringKey, string> = {
   "preset.single_rate": "Однозонный",
   "preset.ru_two_zone": "Двухзонный",
   "preset.ru_three_zone": "Трёхзонный",
+  energy_picker_followed: "Период из выбора периода «Энергия» на этом дашборде",
+  energy_picker_missing:
+    "На дашборде нет выбора периода «Энергия»: добавьте карточку «Выбор даты энергии» или укажите period_source: card.",
   "zone.t0": "Круглосуточно",
   "zone.t1": "День",
   "zone.t1.peak": "Пик",

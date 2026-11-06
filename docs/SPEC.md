@@ -193,7 +193,18 @@ the repo as is, with no build step) and CI fails when it does not match the sour
   extra module does this by itself.
 - **Config.** `title`, `entities` (subset of the configured sensors; default all), `period` (initial preset,
   default `this_month`), `grouping` (`auto` / `hour` / `day` / `week` / `month` for the "by period" table,
-  default `auto`), `show_breakdown` (bool), `compare` (1–5 tariff scenarios, §4.2). No visual editor yet.
+  default `auto`), `show_breakdown` (bool), `compare` (1–5 tariff scenarios, §4.2), `period_source` (`auto` /
+  `energy` / `card`, default `auto`) and `collection_key`. No visual editor yet.
+- **Following HA's energy date picker** (task 016). With `period_source: auto` (default) the card follows the
+  period of Home Assistant's `energy-date-selection` card on the same dashboard when there is one, and otherwise
+  shows its own picker; `energy` shows a note when the picker is missing; `card` always uses its own picker. The
+  picker keeps its period in an "energy collection" on the websocket connection, `connection["_" + key]` with
+  `key` = the picker card's `collection_key`, by default `energy_<dashboard url path>` (HA frontend
+  `src/data/energy.ts`, checked on `dev` 2026-11-06). **Not a public API:** the card only reads `start`/`end`
+  and `subscribe()`, validates the shape, retries until the collection appears, unsubscribes when removed, and
+  falls back to its own picker when anything is missing. HA keeps the bounds at a midnight / end of day in the
+  browser's or server's zone (user profile), so the card reads them 12 h inside the range, which makes the
+  calendar dates independent of that choice. While following, the own picker is replaced by a period line.
 - **Period picker** (modelled on the Energy dashboard's period selector). A period is a closed range of local
   dates. Presets: today, yesterday, this/last week, this/last month, this quarter, this year, last 7 / 30 days,
   last 12 months, or a custom range. Arrows move by the period's own size: a range of whole calendar months
