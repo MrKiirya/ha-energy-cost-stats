@@ -2,10 +2,15 @@
 
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
+from types import MappingProxyType
 from typing import Any
 
 import pytest
-from homeassistant.config_entries import ConfigEntryState, ConfigSubentryData
+from homeassistant.config_entries import (
+    ConfigEntryState,
+    ConfigSubentry,
+    ConfigSubentryData,
+)
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -336,3 +341,160 @@ async def test_compare_not_loaded(hass: HomeAssistant, hass_ws_client):
     assert await async_setup_component(hass, DOMAIN, {})
     msg = await ws(hass, hass_ws_client, "compare", **COMPARE)
     assert msg["error"]["code"] == "not_loaded"
+
+
+# ---- reconcile after subentry changes (task 018) ----------------------------------
+
+
+def tariff_subentries(entry: MockConfigEntry) -> dict[str | None, Any]:
+    return {
+        s.unique_id: s for s in entry.subentries.values() if s.subentry_type == "tariff"
+    }
+
+
+def later_single(valid_from: str) -> dict[str, Any]:
+    return {
+        **SINGLE,
+        "versions": [{**SINGLE["versions"][0], "valid_from": valid_from}],
+    }
+
+
+async def delete_tariff(
+    hass: HomeAssistant, entry: MockConfigEntry, tariff_id: str
+) -> None:
+    hass.config_entries.async_remove_subentry(
+        entry, tariff_subentries(entry)[tariff_id].subentry_id
+    )
+    await hass.async_block_till_done()
+    assert entry.state is ConfigEntryState.LOADED
+
+
+async def test_deleting_an_applied_tariff_lets_the_previous_continue(
+    hass: HomeAssistant,
+):
+    entry = await setup_v2(
+        hass,
+        [TWO_ZONE, SINGLE],
+        applied=[
+            {"from": "2026-01-01", "tariff": "single"},
+            {"from": "2026-05-01", "tariff": "two_zone"},
+        ],
+    )
+    await delete_tariff(hass, entry, "two_zone")
+    assert set(tariff_subentries(entry)) == {"single"}
+    assert entry.options["applied"] == [{"from": "2026-01-01", "tariff": "single"}]
+
+
+async def test_deleting_the_first_applied_tariff(hass: HomeAssistant):
+    applied = [
+        {"from": "2026-03-01", "tariff": "two_zone"},
+        {"from": "2026-05-01", "tariff": "single"},
+    ]
+    entry = await setup_v2(hass, [TWO_ZONE, SINGLE], applied=applied)
+    await delete_tariff(hass, entry, "two_zone")
+    # The next tariff has a version on the deleted start, so it takes over the period.
+    assert entry.options["applied"] == [{"from": "2026-03-01", "tariff": "single"}]
+
+
+async def test_deleting_the_first_applied_tariff_keeps_a_later_start(
+    hass: HomeAssistant,
+):
+    applied = [
+        {"from": "2026-03-01", "tariff": "two_zone"},
+        {"from": "2026-05-01", "tariff": "single"},
+    ]
+    entry = await setup_v2(
+        hass, [TWO_ZONE, later_single("2026-04-01")], applied=applied
+    )
+    await delete_tariff(hass, entry, "two_zone")
+    assert entry.options["applied"] == [{"from": "2026-05-01", "tariff": "single"}]
+
+
+async def test_deleting_an_applied_tariff_merges_neighbours(hass: HomeAssistant):
+    entry = await setup_v2(
+        hass,
+        [TWO_ZONE, SINGLE],
+        applied=[
+            {"from": "2026-01-01", "tariff": "single"},
+            {"from": "2026-03-01", "tariff": "two_zone"},
+            {"from": "2026-05-01", "tariff": "single"},
+        ],
+    )
+    await delete_tariff(hass, entry, "two_zone")
+    assert entry.options["applied"] == [{"from": "2026-01-01", "tariff": "single"}]
+
+
+async def test_deleting_the_only_applied_tariff_applies_the_next(
+    hass: HomeAssistant,
+):
+    entry = await setup_v2(
+        hass,
+        [TWO_ZONE, later_single("2026-02-01"), THREE_ZONE],
+        applied=[{"from": "2026-03-01", "tariff": "two_zone"}],
+    )
+    await delete_tariff(hass, entry, "two_zone")
+    assert entry.options["applied"] == [{"from": "2026-02-01", "tariff": "single"}]
+    assert entry.runtime_data.schedule is not None
+
+
+async def test_deleting_the_last_tariff_leaves_nothing_applied(hass: HomeAssistant):
+    entry = await setup_v2(
+        hass, [TWO_ZONE], applied=[{"from": "2026-01-01", "tariff": "two_zone"}]
+    )
+    await delete_tariff(hass, entry, "two_zone")
+    assert not tariff_subentries(entry)
+    assert "applied" not in entry.options
+    assert entry.runtime_data.schedule is None
+
+
+async def test_deleting_unapplied_tariff(hass: HomeAssistant):
+    entry = await setup_v2(
+        hass,
+        [TWO_ZONE, THREE_ZONE, SINGLE],
+        applied=[{"from": "2026-01-01", "tariff": "two_zone"}],
+        compare=["three_zone", "single"],
+    )
+    hass.config_entries.async_remove_subentry(
+        entry, tariff_subentries(entry)["three_zone"].subentry_id
+    )
+    await hass.async_block_till_done()
+    assert set(tariff_subentries(entry)) == {"two_zone", "single"}
+    assert entry.options["compare"] == ["single"]
+    assert entry.state is ConfigEntryState.LOADED
+
+
+async def test_first_tariff_auto_applied_only_once(hass: HomeAssistant):
+    entry = await setup_v2(hass, [])
+    assert "applied" not in entry.options
+    hass.config_entries.async_add_subentry(
+        entry,
+        ConfigSubentry(
+            data=MappingProxyType(dict(TWO_ZONE)),
+            subentry_type="tariff",
+            title="Two-zone",
+            unique_id="two_zone",
+        ),
+    )
+    await hass.async_block_till_done()
+    assert entry.options["applied"] == [{"from": "2026-01-01", "tariff": "two_zone"}]
+    assert entry.state is ConfigEntryState.LOADED
+
+    hass.config_entries.async_add_subentry(
+        entry,
+        ConfigSubentry(
+            data=MappingProxyType(dict(SINGLE)),
+            subentry_type="tariff",
+            title="Single-rate",
+            unique_id="single",
+        ),
+    )
+    await hass.async_block_till_done()
+    assert entry.options["applied"] == [{"from": "2026-01-01", "tariff": "two_zone"}]
+
+
+async def test_existing_tariffs_stay_unapplied_after_reload(hass: HomeAssistant):
+    entry = await setup_v2(hass, [SINGLE])
+    await hass.config_entries.async_reload(entry.entry_id)
+    await hass.async_block_till_done()
+    assert "applied" not in entry.options
+    assert entry.runtime_data.schedule is None
