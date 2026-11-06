@@ -45,7 +45,7 @@ new plan (UX: "duplicate current plan"). Two plans with the same `valid_from` ar
   `t0` = single-rate (a distinct key, never mixed with the two-zone `t1` in multi-plan reports), `t1` =
   day/peak, `t2` = night, `t3` = semi-peak. `name` is display-only (renaming must not break statistics).
 - Prices are `Decimal` and must be `>= 0` (0 = free hours is allowed); money is `Decimal` everywhere in
-  the engine, never `float`; rounding to 2 decimals happens only at report output.
+  the engine, never `float`; rounding happens only at report output (see §4).
 - Validation: zones cover 24h exactly once (no gap, no overlap); boundaries on whole hours.
 - Presets (editable after creation): single-rate (`t0`); RU two-zone (`t1` day 7–23, `t2` night 23–7);
   RU three-zone (`t1` peak 7–10 & 17–21, `t3` semi-peak 10–17 & 21–23, `t2` night 23–7). Generic example
@@ -62,6 +62,26 @@ new plan (UX: "duplicate current plan"). Two plans with the same `valid_from` ar
 ## 4. Report output
 Rows per device (+ total, + optional "untracked" if a main meter is configured):
 kWh per zone, price per zone, cost per zone, totals. Groupings: hour/day/week/month/custom range.
+
+Semantics (engine, `build_report`; details in tasks/006-pricing-and-grouping.md):
+- **Zones.** `Report.zones` is the union of zone keys over the plans in force in the window, in order of
+  first appearance (plans chronological, zones in declaration order), e.g. `t0` then two-zone gives
+  `t0, t1, t2`. A zone's name is the one from the latest plan containing the key. Every row has one cell
+  per `Report.zones` entry, in the same order.
+- **Cells.** `kwh`/`cost` are exact sums over counted (measured + estimated) hours in that zone; `None` if
+  there are none (a missing or not-in-force zone), never a silent `0`; a measured `0` stays `0`. `price`
+  comes from the schedule: the single zone price in the bucket, `None` if several prices applied (plan
+  switch with a price change inside the bucket) or the zone has no hour in the bucket.
+- **Rows.** `kwh` = all counted kWh (priced + unpriced), `None` if no hour was counted. `cost` = sum of
+  cell costs, `None` if no counted hour was priced (unpriced-only data means "unknown", not "free").
+  `unpriced_kwh` = counted kWh before the first plan. Estimated/excluded kWh are reported separately;
+  excluded kWh is not part of `kwh` or `cost`. Coverage counts measured/estimated/excluded/missing hours.
+- **Total row.** Sum of the device rows, skipping `None` (`None` if all are); coverage is summed. `totals`
+  is the whole-window bucket, computed independently of the other buckets.
+- **Rounding.** The engine keeps exact `Decimal`s and never rounds; totals are exact sums, not sums of
+  rounded cells. Rounding happens only at output (`engine/rounding.py`, `ROUND_HALF_UP`): money 2
+  decimals, kWh 3, prices 4. A displayed total may therefore differ from the sum of the displayed cells
+  by 0.01; this is accepted.
 
 ## 5. Known pitfalls to handle
 - Engine input is hourly deltas keyed by **UTC hour start**; zones, plan switches and groupings use local
