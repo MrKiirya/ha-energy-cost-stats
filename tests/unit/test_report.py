@@ -33,6 +33,7 @@ from engine.report import (
     prepare_measured,
 )
 from engine.rounding import round_money
+from engine.serialize import DeviceInfo, report_to_json
 from engine.tariff import TariffPlan, TariffSchedule
 from engine.timeutil import iter_hours, local_day_start
 
@@ -668,3 +669,44 @@ def test_report_is_report_type():
     report = build_report(req, default_schedule(), [series(P1, req)])
     assert isinstance(report, Report)
     assert isinstance(report.totals, Bucket)
+
+
+def test_build_report_without_schedule():
+    req = request(date(2026, 1, 15), date(2026, 1, 16))
+    hours = list(iter_hours(req.start, req.end))
+    clean = DeviceSeries(P1, {h: ONE for h in hours})
+    report = build_report(req, None, [clean])
+    assert report.zones == ()
+    assert report.plans == ()
+    assert report.unpriced_hours == 24
+    row = report.totals.rows[0]
+    assert row.kwh == 24
+    assert row.cost is None
+    assert row.unpriced_kwh == 24
+    assert row.zones == ()
+    assert report.totals.total.cost is None
+
+    gapped = DeviceSeries(
+        P1,
+        {
+            h: (D("5") if i == 4 else ONE)
+            for i, h in enumerate(hours)
+            if i not in (1, 2, 3)
+        },
+    )
+    spread = build_report(req, None, [gapped])
+    assert [i.kind for i in spread.issues] == [IssueKind.ESTIMATED]
+    assert spread.totals.rows[0].coverage.estimated == 4
+
+    doc = report_to_json(
+        report,
+        devices=[DeviceInfo(P1, "Plug 01", "ok")],
+        time_zone="Europe/Moscow",
+        currency=None,
+    )
+    row_doc = doc["totals"]["rows"][0]
+    assert doc["zones"] == []
+    assert doc["plans"] == []
+    assert row_doc["cost"] is None
+    assert row_doc["unpriced_kwh"] == "24.000"
+    assert row_doc["zones"] == []
