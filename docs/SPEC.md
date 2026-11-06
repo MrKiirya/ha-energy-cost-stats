@@ -13,38 +13,44 @@ on a multi-zone time-of-use tariff whose prices change over time — for example
 three-zone residential tariffs.
 
 ## 2. Architecture
-- `custom_components/energy_cost_stats/engine/` — pure logic: hourly deltas + tariff plans → report table.
+- `custom_components/energy_cost_stats/engine/` — pure logic: hourly deltas + tariff schedule → report table.
   No `homeassistant` imports.
 - `custom_components/energy_cost_stats/recorder_adapter.py` — the **only** module that touches
   the recorder statistics API (see §6). It returns one engine `DeviceSeries` per statistic id (hourly kWh
   `change`, with neighbour keys, see §5) plus a per-id status (`ok` / `no_statistics` / `unsupported`).
 - Integration layer:
   - config flow (setup) + options flow (select energy entities, multi-select, `device_class: energy`);
-  - tariff plans stored as **config subentries** (MVP); may move to `helpers.storage.Store` + card editor later;
+  - tariffs stored as **config subentries** (one per tariff, §3); the applied history and the comparison list live
+    in `entry.options`;
   - websocket command `energy_cost_stats/report` (period, grouping, entities) → aggregated table;
-  - service `energy_cost_stats.get_report` with `SupportsResponse.ONLY` (for automations/scripts).
-  - Both are registered once in `async_setup` and take the same fields: `start` and `end` (required; a local date
-    `YYYY-MM-DD` = local midnight, or an ISO datetime; a datetime without offset is read in the settings time
-    zone and must fall on a whole UTC hour; `end` is **exclusive**), `grouping` (`hour` / `day` / `week` / `month`
-    / `total`) and optional `entities` (omitted or empty = all configured sensors; otherwise a subset of the
-    configured ones, in the order given, duplicates dropped). There is no time-zone field: the time zone comes
-    from the settings. A date bound in a time zone with a non-whole-hour offset is rounded up to the first UTC
-    hour starting on or after local midnight (§5). Hourly reports are limited to 31 days (745 buckets), other
-    groupings to 3660 days.
+  - service `energy_cost_stats.get_report` with `SupportsResponse.ONLY` (for automations/scripts);
+  - websocket command `energy_cost_stats/compare` (period, optional entities and tariffs) → the actual report
+    plus the same consumption priced with other tariffs (§4.2).
+  - `report` and `get_report` are registered once in `async_setup` and take the same fields: `start` and `end`
+    (required; a local date `YYYY-MM-DD` = local midnight, or an ISO datetime; a datetime without offset is read in
+    the settings time zone and must fall on a whole UTC hour; `end` is **exclusive**), `grouping` (`hour` / `day` /
+    `week` / `month` / `total`) and optional `entities` (omitted or empty = all configured sensors; otherwise a
+    subset of the configured ones, in the order given, duplicates dropped). There is no time-zone field: the time
+    zone comes from the settings. A date bound in a time zone with a non-whole-hour offset is rounded up to the
+    first UTC hour starting on or after local midnight (§5). Hourly reports are limited to 31 days (745 buckets),
+    other groupings to 3660 days.
   - Both return the same JSON document as §4 (decimals are strings; use `| float` in templates). Errors:
-    `not_loaded` (no loaded entry), `invalid_period`, `period_too_long`, `unknown_entity` (websocket error codes;
-    the service raises a translated `ServiceValidationError` with the same key); malformed fields are rejected by
-    the schema (`invalid_format` / `vol.Invalid`). The websocket command needs no admin rights (read-only).
+    `not_loaded` (no loaded entry), `invalid_period`, `period_too_long`, `unknown_entity`, plus `unknown_tariff` for
+    `compare` (websocket error codes; the service raises a translated `ServiceValidationError` with the same key);
+    malformed fields are rejected by the schema (`invalid_format` / `vol.Invalid`). The websocket command needs no
+    admin rights (read-only).
 - Settings (single instance, `single_config_entry`): all settings live in `entry.options` (`entry.data` is empty):
   `time_zone`, `spike_limit` (decimal string, `null` = check off), `device_spike_limits` (entity id -> decimal
-  string; missing = use the global limit, `null` = off for that device) and `entities`. Decimals are strings
-  without exponent. The time zone is stored explicitly (default: the Home Assistant time zone at setup) and does
+  string; missing = use the global limit, `null` = off for that device), `entities`, `applied` (list of
+  `{from, tariff}`, §3; omitted = nothing applied) and optional `compare` (list of tariff ids, §3). Decimals are
+  strings without exponent. The time zone is stored explicitly (default: the Home Assistant time zone at setup) and does
   not follow later Home Assistant changes, so retroactive prices never move silently. The config flow asks for
   time zone and spike limit; the options flow edits them, selects the energy sensors and optionally sets
   per-device spike limits (empty = global, `0` = off). Any options or subentry change reloads the entry through a
   single update listener (not `OptionsFlowWithReload`, which is missing in the minimum HA version). The
-  reloaded entry holds the parsed tariff schedule (`None` when no plan exists), so adding, editing or deleting
-  a plan re-prices all past hours.
+  reloaded entry holds the parsed tariff configuration and the effective schedule (`None` when nothing is
+  applied), so adding, editing or deleting a tariff or changing the applied history re-prices all past hours.
+  The config entry has `VERSION` 2; version 1 (one `tariff_plan` subentry per plan) is migrated at startup (§3).
 - Card (Lit + TypeScript, `frontend/`): renders the table; served by the integration itself (static path + extra JS),
   so users install one HACS repo. Details in §4.1.
 - Stage 2 (optional): write **4 external statistics** series for the Energy dashboard:
@@ -52,22 +58,69 @@ three-zone residential tariffs.
   Optional toggle (off by default) for per-device cost series. External statistics are not entities.
 
 ## 3. Tariff data model
-Versioned **tariff plans**. `valid_from` is a *local* calendar date; the plan applies from local midnight
-of that date until the next plan's `valid_from`; there is no end date. Any change, even price only, is a
-new plan (UX: "duplicate current plan"). Two plans with the same `valid_from` are invalid.
-Storage: one config subentry of type `tariff_plan` per plan, with `unique_id` = `valid_from` (ISO date; the
-flow reports a duplicate date as a field error) and title `"<valid_from> · <name>"`. The subentry data is the
-JSON below, with **prices as decimal strings** (scale kept, no exponent; money never passes through `float`),
-period end of day written as `"24:00"`, and reading is strict (unknown keys and wrong types are rejected).
-`volume_band_limits_kwh` and `band_prices` are written only when non-empty. The zone set of a plan is fixed
-by its preset or the copied plan (the UI edits zone names, prices, periods, plan name and `valid_from`, but
-does not add, remove or re-key zones).
-```json
-{ "valid_from": "2026-07-01", "name": "Two-zone",
-  "zones": [
-    { "key": "t1", "name": "Day",   "price": "10.30", "periods": [["07:00","23:00"]] },
-    { "key": "t2", "name": "Night", "price": "4.43", "periods": [["23:00","07:00"]] } ] }
+**Tariffs** are named, versioned objects. A tariff has a stable `id` (`^[a-z0-9_]{1,32}$`), a display `name` and
+**versions**. A version has a `valid_from` (a *local* calendar date; it applies from local midnight until the next
+version of the same tariff, there is no end date) and its zones with prices and hours. Which tariff was actually
+used, and from which date, is a separate list, `applied`, so a household can switch tariffs over time; any other
+tariff can be priced over the same consumption for comparison (§4.2).
+
+The configuration document has exactly the shape of the planned YAML configuration (task 021), so the forms
+(task 018) and YAML write and read the same thing:
+```yaml
+energy_cost_stats:
+  tariffs:
+    - id: two_zone                       # stable
+      name: Two-zone                     # display name, any language
+      versions:
+        - valid_from: 2026-01-01
+          preset: ru_two_zone            # single_rate | ru_two_zone | ru_three_zone
+          prices: { t1: "8.10", t2: "3.20" }
+          hours: { t1: "07:00-23:00" }   # optional per-zone override of the preset hours
+        - valid_from: 2026-07-01         # zones (keys, names, hours) inherited from the previous version
+          prices: { t1: "8.75", t2: "3.45" }
+    - id: three_zone
+      name: Three-zone
+      versions:
+        - valid_from: 2026-07-01
+          zones:                         # explicit zones instead of a preset
+            - { key: t1, name: Peak,      price: "10.20", hours: "07:00-10:00, 17:00-21:00" }
+            - { key: t3, name: Semi-peak, price: "8.75",  hours: "10:00-17:00, 21:00-23:00" }
+            - { key: t2, name: Night,     price: "3.45",  hours: "23:00-07:00" }
+  applied:                               # or the short form: applied: two_zone
+    - { from: 2026-01-01, tariff: two_zone }
+  compare: [three_zone]                  # optional; default: every tariff that is never applied
 ```
+Rules (parsing is strict: unknown keys, wrong types and bad dates raise `TariffValidationError`):
+- **Versions** are sorted by `valid_from`; dates are distinct. The first version needs `preset` or `zones`. A later
+  version may omit both: it inherits the previous version's zones and must give `prices` for exactly those keys;
+  `hours` may override the hours of inherited zones. A version with `preset` or `zones` starts a new zone set.
+  With a preset, `prices` must name exactly the preset's keys; `zones` and `preset` are mutually exclusive.
+- **Hours** are text `"HH:MM-HH:MM, ..."` (whole hours, `24:00` = end of day); every version covers each hour of
+  the day exactly once. A mapping form for weekday-dependent hours (`{mon-fri: "...", sat-sun: "..."}`) is
+  reserved: it is rejected with a clear message for now.
+- **Applied.** Sorted, distinct `from` dates; each `tariff` must exist and must have a version valid on its `from`
+  date (no unpriced gap inside the applied history). Hours before the first `from` are unpriced. The short form
+  `applied: <id>` means "from the first version of that tariff". No `applied` (or no tariffs) → every hour
+  unpriced (`cost` is `null`).
+- **Effective schedule** (the real cost): for each applied interval `[from_i, from_i+1)`, the version of the
+  applied tariff in force at `from_i` (re-dated to `from_i`) plus its later versions inside the interval. The
+  engine consumes it as an ordinary `TariffSchedule` of plans (one `TariffPlan` per version, named like the tariff).
+- **Comparison.** A compared tariff is priced with its own versions only (hours before its first version are
+  unpriced). `compare` lists tariff ids; default = all tariffs that never appear in `applied`.
+- **Prices** are decimal strings in the document (scale kept, no exponent; money never passes through `float`);
+  numbers are accepted only by the YAML layer (task 021), which converts them.
+
+Storage: one config subentry of type `tariff` per tariff, with `unique_id` = `id`, title = `name` and data = the
+tariff's document (presets kept as written, so the forms and the YAML export show what the user entered).
+`entry.options` gains `applied` (list of `{from, tariff}`) and optional `compare` (list of ids). The `tariff`
+forms and the options menu come in task 018; until then the document is edited by tests and the migration only.
+
+Migration (config entry version 1 → 2): existing `tariff_plan` subentries become one tariff `id: main` (name of
+the latest plan) whose versions are the old plans with explicit zones; `applied: [{from: <first valid_from>, tariff:
+main}]`; the old subentries are removed. No plans → no tariff and no `applied`. A stored plan that fails
+validation makes the migration fail (the entry shows a migration error).
+
+Zone model (shared by all versions and presets):
 - Periods are half-open whole-hour intervals `[start, end)`; `end < start` crosses midnight (e.g.
   `["23:00","07:00"]` = hours 23, 0, 1, ..., 6); `00:00`/`24:00` as **end** means end of day; the full
   day is `00:00–24:00`. Boundaries are whole hours only (hourly statistics limit).
@@ -80,7 +133,7 @@ does not add, remove or re-key zones).
 - Presets (editable after creation): single-rate (`t0`); RU two-zone (`t1` day 7–23, `t2` night 23–7);
   RU three-zone (`t1` peak 7–10 & 17–21, `t3` semi-peak 10–17 & 21–23, `t2` night 23–7). Generic example
   used throughout the tests: two-zone, day `10.30`, night `4.43` per kWh. Verify RU zones before shipping.
-- Leave room for an optional weekday filter (foreign tariffs) later.
+- Leave room for an optional weekday filter (foreign tariffs) later (the reserved `hours` mapping form).
 - Volume tiers ("consumption ranges"): RU residential tariffs sometimes price monthly household kWh in
   bands (e.g. ≤ 3900, 3901–6000, > 6000 kWh/month). The model reserves two optional fields for this,
   non-breaking to add later: `TariffPlan.volume_band_limits_kwh` (ascending upper limits of bands 1..n,
@@ -131,7 +184,7 @@ values are rounded (see Rounding above).
   "end": "2026-01-16T00:00:00+03:00",
   "grouping": "day",
   "zones": [ { "key": "t1", "name": "Day" }, { "key": "t2", "name": "Night" } ],
-  "plans": [ { "valid_from": "2026-01-01", "name": "Two-zone", "zones": [ "...as stored (§3)" ] } ],
+  "plans": [ { "valid_from": "2026-01-01", "name": "Two-zone", "zones": [ "...see below" ] } ],
   "devices": [ { "entity_id": "sensor.plug_01", "name": "Plug 01", "statistics": "ok" } ],
   "buckets": [ "<bucket>" ],
   "totals": "<bucket>",
@@ -169,7 +222,9 @@ values are rounded (see Rounding above).
   With grouping `total`, `buckets` is `[totals]`.
 - **Rows.** `status` is `complete` / `estimated` / `partial` / `missing`. Totals are rounded from exact
   sums, not summed from rounded cells.
-- **Plans** are the stored plan data (`plan_to_data`, §3), unrounded, for the plans in force in the window.
+- **Plans** are the versions of the effective schedule in force in the window, serialized with `plan_to_data`
+  (`valid_from`, `name` = tariff name, `zones` with `key`, `name`, `price` and `periods`), unrounded. With an
+  applied switch, the first version of the new tariff is re-dated to the switch date (§3).
 - **Issues.** `kind` is `estimated` / `excluded_negative` / `excluded_spike`; `hours` is the number of
   real elapsed hours of the issue span (not wall-clock, so correct across DST changes) and `kwh` its rounded energy.
 - **`devices[].statistics`** is the recorder adapter's status string (e.g. `ok`, `no_statistics`,
@@ -214,6 +269,21 @@ the repo as is, with no build step) and CI fails when it does not match the sour
   Notes: no tariff plan, unpriced hours; a collapsible "data quality" list shows the issues.
 - **Language.** English and Russian strings in the card (`hass.locale.language`); numbers, money (HA currency) and
   dates via `Intl` in that locale.
+
+### 4.2 Tariff comparison (`energy_cost_stats/compare`)
+Read-only websocket command (no admin rights). Fields: `start`, `end` (as in §2), optional `entities` (as in §2) and
+optional `tariffs` (tariff ids; default = the configured `compare` list, which defaults to every tariff that is
+never applied; an explicit empty list compares nothing). There is no `grouping`: the documents are grouped as
+`total`. The statistics are read once and the same counted kWh (with the same data-quality handling) is priced by
+the actual schedule and by each compared tariff separately, using that tariff's own versions only (§3); hours before
+its first version are unpriced.
+```json
+{ "actual": "<§4 document>",
+  "tariffs": [ { "id": "three_zone", "name": "Three-zone", "report": "<§4 document>" } ] }
+```
+`tariffs` follows the requested (or configured) order, duplicates dropped. A tariff that is also applied may be
+requested; its report then equals the actual one over the period it covers. Errors as for `report`
+(`not_loaded`, `invalid_period`, `period_too_long`, `unknown_entity`) plus `unknown_tariff`.
 
 ## 5. Known pitfalls to handle
 - Engine input is hourly deltas keyed by **UTC hour start**; zones, plan switches and groupings use local
@@ -298,7 +368,7 @@ of looking green.
 |---|---|---|
 | `statistics_during_period(..., types={"change", ...})` | ≤ 2023.x | Reading side; stable. |
 | `get_metadata(statistic_ids=...)` | ≤ 2023.x | Adapter reads only `has_sum` and `unit_of_measurement`. |
-| Config subentries | 2025.3 | Hard floor: tariff plans are subentries. |
+| Config subentries | 2025.3 | Hard floor: tariffs are subentries. |
 | `StatisticMeanType` / `mean_type` in metadata | 2025.4 | Writing external statistics (stage 2). |
 | `unit_class` in statistics metadata | 2025.11 | Adapter passes it only when supported. |
 | `has_mean` removed; `mean_type` + `unit_class` mandatory for writes | 2026.11 | Adapter must already comply. |

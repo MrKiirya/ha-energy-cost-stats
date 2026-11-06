@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from functools import partial
 from typing import Any
@@ -25,6 +26,7 @@ from .const import (
     ERR_NOT_LOADED,
     ERR_PERIOD_TOO_LONG,
     ERR_UNKNOWN_ENTITY,
+    ERR_UNKNOWN_TARIFF,
     MAX_HOURLY_DAYS,
     MAX_PERIOD_DAYS,
 )
@@ -32,6 +34,8 @@ from .engine.models import Grouping, ReportRequest
 from .engine.quality import QualitySettings
 from .engine.report import build_report
 from .engine.serialize import DeviceInfo, report_to_json
+from .engine.tariff import TariffSchedule
+from .engine.tariff_config import comparison_schedule
 from .recorder_adapter import HourlySeries, async_read_hourly_changes
 
 _HOUR = timedelta(hours=1)
@@ -44,6 +48,7 @@ ERROR_MESSAGES = {
     ERR_INVALID_PERIOD: "Invalid period: {detail}",
     ERR_PERIOD_TOO_LONG: "The period is too long (at most {max})",
     ERR_UNKNOWN_ENTITY: "{entity_id} is not one of the configured energy sensors",
+    ERR_UNKNOWN_TARIFF: "{tariff_id} is not a configured tariff",
 }
 
 
@@ -134,15 +139,27 @@ def _display_name(hass: HomeAssistant, series: HourlySeries) -> str:
     return series.name or entity_id
 
 
-async def async_get_report(
+@dataclass
+class _Prepared:
+    """A validated request with its statistics read once, ready to be priced."""
+
+    runtime: Any
+    request: ReportRequest
+    read: Sequence[HourlySeries]
+    quality: QualitySettings
+    devices: list[DeviceInfo]
+    time_zone: str
+
+
+async def _async_prepare(
     hass: HomeAssistant,
     *,
     start: str,
     end: str,
     grouping: str,
     entities: Sequence[str] | None,
-) -> dict[str, Any]:
-    """Build the report document. Raises ``ReportError`` for user mistakes."""
+) -> _Prepared:
+    """Validate the request and read the statistics (raises ``ReportError``)."""
     entry = _loaded_entry(hass)
     runtime = entry.runtime_data
     settings = runtime.settings
@@ -172,19 +189,77 @@ async def async_get_report(
         spike_limit=settings.spike_limit,
         device_spike_limits=settings.device_spike_limits,
     )
-    report = await hass.async_add_executor_job(
-        partial(
-            build_report,
-            request,
-            runtime.schedule,
-            [item.series for item in read],
-            quality=quality,
-        )
-    )
     devices = [
         DeviceInfo(item.statistic_id, _display_name(hass, item), item.status.value)
         for item in read
     ]
-    return report_to_json(
-        report, devices=devices, time_zone=time_zone, currency=hass.config.currency
+    return _Prepared(runtime, request, read, quality, devices, time_zone)
+
+
+async def _async_priced_document(
+    hass: HomeAssistant, prepared: _Prepared, schedule: TariffSchedule | None
+) -> dict[str, Any]:
+    """Price the prepared consumption with ``schedule`` and serialize the document."""
+    report = await hass.async_add_executor_job(
+        partial(
+            build_report,
+            prepared.request,
+            schedule,
+            [item.series for item in prepared.read],
+            quality=prepared.quality,
+        )
     )
+    return report_to_json(
+        report,
+        devices=prepared.devices,
+        time_zone=prepared.time_zone,
+        currency=hass.config.currency,
+    )
+
+
+async def async_get_report(
+    hass: HomeAssistant,
+    *,
+    start: str,
+    end: str,
+    grouping: str,
+    entities: Sequence[str] | None,
+) -> dict[str, Any]:
+    """Build the report document. Raises ``ReportError`` for user mistakes."""
+    prepared = await _async_prepare(
+        hass, start=start, end=end, grouping=grouping, entities=entities
+    )
+    return await _async_priced_document(hass, prepared, prepared.runtime.schedule)
+
+
+async def async_get_comparison(
+    hass: HomeAssistant,
+    *,
+    start: str,
+    end: str,
+    entities: Sequence[str] | None,
+    tariffs: Sequence[str] | None,
+) -> dict[str, Any]:
+    """The actual report plus the same consumption priced with other tariffs.
+
+    Statistics are read once; each tariff is priced with its own versions only.
+    Raises ``ReportError`` for user mistakes.
+    """
+    prepared = await _async_prepare(
+        hass, start=start, end=end, grouping=Grouping.TOTAL.value, entities=entities
+    )
+    config = prepared.runtime.tariffs
+    selected = list(dict.fromkeys(config.compare if tariffs is None else tariffs))
+    known = {tariff.id for tariff in config.tariffs}
+    for tariff_id in selected:
+        if tariff_id not in known:
+            raise ReportError(ERR_UNKNOWN_TARIFF, tariff_id=tariff_id)
+    actual = await _async_priced_document(hass, prepared, prepared.runtime.schedule)
+    compared: list[dict[str, Any]] = []
+    for tariff_id in selected:
+        tariff = config.tariff(tariff_id)
+        document = await _async_priced_document(
+            hass, prepared, comparison_schedule(tariff)
+        )
+        compared.append({"id": tariff.id, "name": tariff.name, "report": document})
+    return {"actual": actual, "tariffs": compared}

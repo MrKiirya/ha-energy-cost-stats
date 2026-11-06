@@ -12,6 +12,8 @@ CONF_TIME_ZONE: Final = "time_zone"
 CONF_SPIKE_LIMIT: Final = "spike_limit"
 CONF_DEVICE_SPIKE_LIMITS: Final = "device_spike_limits"
 CONF_ENTITIES: Final = "entities"
+CONF_APPLIED: Final = "applied"
+CONF_COMPARE: Final = "compare"
 
 # Form-only keys (never stored).
 CONF_SPIKE_CHECK: Final = "spike_check"
@@ -20,28 +22,17 @@ CONF_EDIT_DEVICE_LIMITS: Final = "edit_device_limits"
 # Default spike limit in kWh per hour (SPEC §5).
 DEFAULT_SPIKE_LIMIT: Final = Decimal("4")
 
-# Tariff plan subentries (docs/SPEC.md §3).
+# Tariff subentries (docs/SPEC.md §3): one config subentry per tariff.
+SUBENTRY_TYPE_TARIFF: Final = "tariff"
+# Legacy (config entry version 1) subentry type, only read by the migration.
 SUBENTRY_TYPE_TARIFF_PLAN: Final = "tariff_plan"
-PRESET_SINGLE_RATE: Final = "single_rate"
-PRESET_RU_TWO_ZONE: Final = "ru_two_zone"
-PRESET_RU_THREE_ZONE: Final = "ru_three_zone"
-PRESETS: Final = (PRESET_SINGLE_RATE, PRESET_RU_TWO_ZONE, PRESET_RU_THREE_ZONE)
-
-# Tariff plan form field names.
-CONF_PRESET: Final = "preset"
-CONF_SOURCE_PLAN: Final = "source_plan"
-CONF_VALID_FROM: Final = "valid_from"
-CONF_PLAN_NAME: Final = "name"
-
-
-def zone_field(key: str, suffix: str) -> str:
-    """Form field name of a zone attribute, e.g. ``t1_price``."""
-    return f"{key}_{suffix}"
-
+MIGRATED_TARIFF_ID: Final = "main"
 
 # Report API (docs/SPEC.md §2): websocket command, service, request fields, errors.
 SERVICE_GET_REPORT: Final = "get_report"
 WS_TYPE_REPORT: Final = "energy_cost_stats/report"
+WS_TYPE_COMPARE: Final = "energy_cost_stats/compare"
+ATTR_TARIFFS: Final = "tariffs"
 
 ATTR_START: Final = "start"
 ATTR_END: Final = "end"
@@ -52,6 +43,7 @@ ERR_NOT_LOADED: Final = "not_loaded"
 ERR_INVALID_PERIOD: Final = "invalid_period"
 ERR_PERIOD_TOO_LONG: Final = "period_too_long"
 ERR_UNKNOWN_ENTITY: Final = "unknown_entity"
+ERR_UNKNOWN_TARIFF: Final = "unknown_tariff"
 
 # Hourly reports are limited to 31 days plus the closing hour (745 buckets).
 MAX_HOURLY_DAYS: Final = 31
