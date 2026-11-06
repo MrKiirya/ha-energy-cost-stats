@@ -43,8 +43,12 @@ TARIFFS = [
 BASE_OPTIONS: dict[str, Any] = {
     "time_zone": "Europe/Berlin",
     "spike_limit": "4",
-    "device_spike_limits": {PLUG_01: "10"},
-    "entities": [PLUG_01],
+    "sensors": {
+        "mode": "filter",
+        "include": {"entity_id": [PLUG_01]},
+        "exclude": {},
+        "overrides": {PLUG_01: {"spike_limit": "10"}},
+    },
     "applied": [{"from": "2026-01-01", "tariff": "main"}],
 }
 
@@ -65,7 +69,7 @@ async def _add_entry(
         title=DEFAULT_TITLE,
         data={},
         options=dict(BASE_OPTIONS if options is None else options),
-        version=2,
+        version=3,
         subentries_data=[
             ConfigSubentryData(
                 data=data,
@@ -158,8 +162,7 @@ async def test_general_saves_and_keeps_other_options(hass: HomeAssistant):
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["time_zone"] == "UTC"
     assert entry.options["spike_limit"] == "6"
-    assert entry.options["entities"] == [PLUG_01]
-    assert entry.options["device_spike_limits"] == {PLUG_01: "10"}
+    assert entry.options["sensors"] == BASE_OPTIONS["sensors"]
     assert entry.options["applied"] == TWO_CHANGES
     assert entry.options["compare"] == ["late"]
     await hass.async_block_till_done()
@@ -263,7 +266,7 @@ async def test_applied_add_change(hass: HomeAssistant):
     result = await _submit(hass, result, {"from": "2026-03-01", "tariff": "other"})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["applied"] == TWO_CHANGES
-    assert entry.options["entities"] == [PLUG_01]
+    assert entry.options["sensors"] == BASE_OPTIONS["sensors"]
     await hass.async_block_till_done()
     assert entry.state is ConfigEntryState.LOADED
     schedule = entry.runtime_data.schedule
@@ -477,6 +480,8 @@ async def test_options_strings_complete(hass: HomeAssistant):
         for step_id in (
             "init",
             "sensors",
+            "sensors_select",
+            "sensors_preview",
             "device_limits",
             "general",
             "applied",
@@ -498,6 +503,34 @@ async def test_options_strings_complete(hass: HomeAssistant):
             "applied_add",
             "applied_pick",
         }
+        assert set(steps["sensors"]["menu_options"]) == {
+            "sensors_select",
+            "device_limits",
+        }
+        assert set(steps["sensors_preview"]["menu_options"]) == {
+            "sensors_save",
+            "sensors_select",
+        }
+        select = steps["sensors_select"]
+        assert set(select["data"]) == {"mode"}
+        assert set(select["sections"]) == {"include", "exclude"}
+        assert set(select["sections"]["include"]["data"]) == {
+            "all",
+            "target",
+            "entity_globs",
+        }
+        assert set(select["sections"]["exclude"]["data"]) == {
+            "target",
+            "entity_globs",
+        }
+        selector = json.loads((COMPONENT / path).read_text())["selector"]
+        assert set(selector["sensor_mode"]["options"]) == {
+            "energy_dashboard",
+            "filter",
+        }
+        for placeholder in ("{count}", "{sensors}"):
+            assert placeholder in steps["sensors"]["description"], path
+            assert placeholder in steps["sensors_preview"]["description"], path
         assert set(steps["general"]["sections"]) == {"sidebar"}
         assert set(steps["general"]["sections"]["sidebar"]["data"]) == {
             "show",
@@ -505,7 +538,10 @@ async def test_options_strings_complete(hass: HomeAssistant):
             "icon",
         }
         for error in (
-            "not_energy_entity",
+            "no_dashboard_devices",
+            "nothing_included",
+            "invalid_glob",
+            "invalid_target",
             "invalid_limit",
             "duplicate_from",
             "no_version",
@@ -513,11 +549,10 @@ async def test_options_strings_complete(hass: HomeAssistant):
             "invalid_config",
         ):
             assert error in options["error"], (path, error)
-        for abort in ("invalid_options", "no_tariffs"):
+        for abort in ("invalid_options", "no_tariffs", "no_sensors"):
             assert abort in options["abort"], (path, abort)
     # Every form field of every leaf step has a label.
     flows = {
-        "sensors": ("sensors",),
         "general": ("general",),
         "applied_single": ("applied", "applied_single"),
         "applied_add": ("applied", "applied_add"),

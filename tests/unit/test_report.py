@@ -24,6 +24,7 @@ from engine.models import (
     ZoneLabel,
 )
 from engine.presets import ru_three_zone, ru_two_zone, single_rate
+from engine.quality import QualitySettings
 from engine.report import (
     HourKind,
     HourValue,
@@ -710,3 +711,123 @@ def test_build_report_without_schedule():
     assert row_doc["cost"] is None
     assert row_doc["unpriced_kwh"] == "24.000"
     assert row_doc["zones"] == []
+
+
+def test_totals_skip_nested_devices():
+    req = msk_day()
+    schedule = default_schedule()
+    parent = series(P1, req, ONE)
+    child = series(P2, req, D("0.5"))
+    plain = build_report(req, schedule, [parent, child])
+    nested = {P2: P1, "sensor.unknown": P1, P3: "sensor.missing"}
+    report = build_report(req, schedule, [parent, child], nested=nested)
+
+    # Default nested = old behaviour; rows are unchanged.
+    assert plain.totals.total.kwh == D("36")
+    assert report.totals.rows == plain.totals.rows
+    only_parent = build_report(req, schedule, [parent])
+    for bucket, expected in (
+        (report.buckets[0], only_parent.buckets[0]),
+        (report.totals, only_parent.totals),
+    ):
+        assert bucket.total == expected.total
+    assert report.totals.total.kwh == D("24")
+    assert report.totals.total.cost == D("200.24")
+    assert report.totals.total.coverage == Coverage(24, 24, 0, 0, 0)
+    assert cells(report.totals.total) == cells(only_parent.totals.total)
+
+
+def test_nested_child_counts_where_upstream_has_no_value():
+    req = msk_day()
+    schedule = default_schedule()
+    # The upstream only has data from the 13th hour on, with a gap hour in between.
+    parent = series(P1, req, ONE, skip=[*range(12), 15])
+    child = series(P2, req, D("0.5"))
+    report = build_report(req, schedule, [parent, child], nested={P2: P1})
+    total = report.totals.total
+    # The parent has 12 hours (hour 15 is a spread gap hour worth 0.5 kWh, together with
+    # hour 16); the child counts for the 12 hours before the parent's first value.
+    assert total.kwh == D("11") + D("0.5") * 12
+    assert total.coverage == Coverage(24 + 12, 22, 2, 0, 12)
+    assert report.totals.rows[1].kwh == 12
+    # Priced per zone from the same hours: day/night split of the counted hours.
+    assert sum((c.cost or 0 for c in total.zones), D(0)) == total.cost
+    hourly = build_report(
+        request(date(2026, 1, 15), date(2026, 1, 16), grouping=Grouping.HOUR),
+        schedule,
+        [parent, child],
+        nested={P2: P1},
+    )
+    assert [b.total.kwh for b in hourly.buckets[:3]] == [D("0.5")] * 3
+    assert hourly.buckets[12].total.kwh == ONE
+    assert hourly.buckets[15].total.kwh == D("0.5")
+
+
+def test_nested_child_counts_when_upstream_hour_is_excluded():
+    req = msk_day()
+    # A spike hour of the upstream is excluded, so the child's hour stays in the total.
+    parent = series(P1, req, lambda i: D("9") if i == 5 else ONE)
+    child = series(P2, req, D("0.5"))
+    report = build_report(
+        req,
+        default_schedule(),
+        [parent, child],
+        quality=QualitySettings(spike_limit=D("4")),
+        nested={P2: P1},
+    )
+    assert report.totals.rows[0].excluded_kwh == D("9")
+    assert report.totals.total.kwh == D("23") + D("0.5")
+
+
+def test_nested_without_upstream_series_counts_child():
+    req = msk_day()
+    child = series(P2, req, D("0.5"))
+    report = build_report(req, default_schedule(), [child], nested={P2: P1})
+    assert report.totals.total.kwh == D("12")
+    assert (
+        report.totals.total
+        == build_report(req, default_schedule(), [child]).totals.total
+    )
+
+
+def test_three_level_chain_counts_each_hour_once():
+    req = msk_day()
+    top = series(P3, req, ONE)
+    middle = series(P2, req, D("0.6"), skip=range(12))
+    bottom = series(P1, req, D("0.5"))
+    report = build_report(
+        req,
+        default_schedule(),
+        [bottom, middle, top],
+        nested={P1: P2, P2: P3},
+    )
+    assert report.totals.total.kwh == D("24")
+    assert report.totals.total.coverage == Coverage(24, 24, 0, 0, 0)
+
+
+def test_chain_with_gap_in_top_device():
+    req = msk_day()
+    top = series(P3, req, ONE, skip=[0, 1, 2])
+    middle = series(P2, req, D("0.6"))
+    bottom = series(P1, req, D("0.5"))
+    report = build_report(
+        req,
+        default_schedule(),
+        [bottom, middle, top],
+        nested={P1: P2, P2: P3},
+    )
+    # Hours 0-2: the top has no value, the middle counts (the bottom is inside it).
+    assert report.totals.total.kwh == D("21") + D("0.6") * 3
+
+
+def test_nested_cycle_in_mapping_terminates():
+    req = msk_day()
+    report = build_report(
+        req,
+        default_schedule(),
+        [series(P1, req, ONE), series(P2, req, ONE)],
+        nested={P1: P2, P2: P1},
+    )
+    # Terminates; the integration never passes a cycle (its members have no upstream).
+    assert report.totals.total.kwh is None
+    assert report.totals.rows[0].kwh == 24

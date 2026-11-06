@@ -6,10 +6,15 @@ from typing import Any
 
 import pytest
 
+from custom_components.energy_cost_stats.engine.sensors import (
+    SensorMode,
+    SensorSettings,
+)
 from custom_components.energy_cost_stats.settings import (
     IntegrationSettings,
     PanelSettings,
     SettingsError,
+    migrate_sensor_options,
     settings_from_options,
     settings_to_options,
     tariff_document,
@@ -18,9 +23,21 @@ from custom_components.energy_cost_stats.settings import (
 EXAMPLE: dict[str, Any] = {
     "time_zone": "Europe/Berlin",
     "spike_limit": "4",
-    "device_spike_limits": {"sensor.plug_01": "10", "sensor.plug_02": None},
-    "entities": ["sensor.plug_01", "sensor.plug_02"],
+    "sensors": {
+        "mode": "filter",
+        "include": {"entity_id": ["sensor.plug_01", "sensor.plug_02"]},
+        "exclude": {},
+        "overrides": {
+            "sensor.plug_01": {"spike_limit": "10"},
+            "sensor.plug_02": {"spike_limit": None},
+        },
+    },
 }
+
+
+def _sensors(**changes: Any) -> dict[str, Any]:
+    sensors = {**EXAMPLE["sensors"], **changes}
+    return _with(sensors={k: v for k, v in sensors.items() if v is not ...})
 
 
 def _with(**changes: Any) -> dict[str, Any]:
@@ -32,11 +49,13 @@ def test_roundtrip():
     settings = settings_from_options(EXAMPLE)
     assert settings.time_zone == "Europe/Berlin"
     assert settings.spike_limit == Decimal("4")
-    assert dict(settings.device_spike_limits) == {
+    assert dict(settings.sensors.spike_limits()) == {
         "sensor.plug_01": Decimal("10"),
         "sensor.plug_02": None,
     }
-    assert settings.entities == ("sensor.plug_01", "sensor.plug_02")
+    assert settings.sensors.mode is SensorMode.FILTER
+    assert settings.sensors.include is not None
+    assert settings.sensors.include.entity_id == ("sensor.plug_01", "sensor.plug_02")
     assert settings_to_options(settings) == EXAMPLE
 
 
@@ -51,8 +70,7 @@ def test_decimal_normalization():
         settings = IntegrationSettings(
             time_zone="UTC",
             spike_limit=Decimal(value),
-            device_spike_limits={},
-            entities=(),
+            sensors=SensorSettings(mode=SensorMode.FILTER),
         )
         return settings_to_options(settings)["spike_limit"]
 
@@ -73,11 +91,6 @@ def test_decimal_normalization():
         _with(spike_limit=4),
         _with(spike_limit=4.0),
         _with(spike_limit=True),
-        _with(device_spike_limits={"sensor.plug_01": "0"}),
-        _with(device_spike_limits={"": "5"}),
-        _with(entities="sensor.plug_01"),
-        _with(entities=["sensor.plug_01", 5]),
-        _with(entities=["sensor.plug_01", "sensor.plug_01"]),
         _with(time_zone=...),
         _with(time_zone=5),
         _with(unknown_key=1),
@@ -88,10 +101,10 @@ def test_invalid_options(options: dict[str, Any]):
         settings_from_options(options)
 
 
-def test_device_limits_read_only():
+def test_overrides_read_only():
     settings = settings_from_options(EXAMPLE)
     with pytest.raises(TypeError):
-        settings.device_spike_limits["sensor.plug_01"] = Decimal("1")  # type: ignore[index]
+        settings.sensors.overrides["sensor.plug_01"] = None  # type: ignore[index]
     with pytest.raises(FrozenInstanceError):
         settings.time_zone = "UTC"  # type: ignore[misc]
 
@@ -198,3 +211,137 @@ def test_tariff_document():
         "applied": [],
         "compare": ["a"],
     }
+
+
+DASHBOARD = {"mode": "energy_dashboard", "exclude": {}, "overrides": {}}
+FILTER_ALL = {"mode": "filter", "include": "all", "exclude": {}, "overrides": {}}
+FULL_TARGET = {
+    "entity_id": ["sensor.plug_01_energy"],
+    "device_id": ["dev1"],
+    "area_id": ["kitchen"],
+    "floor_id": ["ground"],
+    "label_id": ["cost_tracking"],
+    "entity_globs": ["sensor.*_plug_*_energy"],
+}
+
+
+@pytest.mark.parametrize(
+    "sensors",
+    [
+        DASHBOARD,
+        {**DASHBOARD, "exclude": {"entity_id": ["sensor.main_meter_t1"]}},
+        FILTER_ALL,
+        {**FILTER_ALL, "include": FULL_TARGET, "exclude": FULL_TARGET},
+        {
+            **FILTER_ALL,
+            "overrides": {
+                "sensor.a": {"spike_limit": "6"},
+                "sensor.b": {"spike_limit": None},
+            },
+        },
+    ],
+)
+def test_sensors_round_trip(sensors: dict[str, Any]):
+    options = _with(sensors=sensors)
+    assert settings_to_options(settings_from_options(options)) == options
+
+
+def test_sensors_decimal_limit_normalized():
+    sensors = {**FILTER_ALL, "overrides": {"sensor.a": {"spike_limit": "6.50"}}}
+    written = settings_to_options(settings_from_options(_with(sensors=sensors)))
+    assert written["sensors"]["overrides"]["sensor.a"] == {"spike_limit": "6.5"}
+
+
+@pytest.mark.parametrize(
+    "sensors",
+    [
+        {**FILTER_ALL, "mode": "other"},
+        {**DASHBOARD, "include": "all"},
+        {**DASHBOARD, "include": {"entity_id": ["sensor.a"]}},
+        {k: v for k, v in FILTER_ALL.items() if k != "include"},
+        {**FILTER_ALL, "include": {}},
+        {**FILTER_ALL, "include": "everything"},
+        {**FILTER_ALL, "include": {"unknown": ["a"]}},
+        {**FILTER_ALL, "include": {"area_id": "kitchen"}},
+        {**FILTER_ALL, "include": {"area_id": ["a", "a"]}},
+        {**FILTER_ALL, "include": {"area_id": [""]}},
+        {**FILTER_ALL, "include": {"area_id": [5]}},
+        {**FILTER_ALL, "exclude": {"unknown": ["a"]}},
+        {**FILTER_ALL, "exclude": "all"},
+        {**FILTER_ALL, "include": {"entity_globs": ["Sensor.*"]}},
+        {**FILTER_ALL, "exclude": {"entity_globs": ["sensor. x"]}},
+        {**FILTER_ALL, "overrides": {"sensor.a": {}}},
+        {**FILTER_ALL, "overrides": {"sensor.a": {"spike_limit": "4", "x": 1}}},
+        {**FILTER_ALL, "overrides": {"sensor.a": {"spike_limit": "0"}}},
+        {**FILTER_ALL, "overrides": {"sensor.a": {"spike_limit": 4}}},
+        {**FILTER_ALL, "overrides": {"": {"spike_limit": "4"}}},
+        {**FILTER_ALL, "overrides": ["sensor.a"]},
+        {**FILTER_ALL, "extra": 1},
+        {k: v for k, v in FILTER_ALL.items() if k != "overrides"},
+        {k: v for k, v in FILTER_ALL.items() if k != "exclude"},
+        "all",
+    ],
+)
+def test_sensors_rejects_malformed(sensors: Any):
+    with pytest.raises(SettingsError):
+        settings_from_options(_with(sensors=sensors))
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"entities": ["sensor.plug_01"]},
+        {"device_spike_limits": {"sensor.plug_01": "5"}},
+    ],
+)
+def test_old_sensor_keys_rejected(extra: dict[str, Any]):
+    with pytest.raises(SettingsError):
+        settings_from_options({**EXAMPLE, **extra})
+
+
+def test_sensors_required():
+    with pytest.raises(SettingsError, match="sensors"):
+        settings_from_options(_with(sensors=...))
+
+
+def test_migrate_sensor_options():
+    default = {
+        "mode": "energy_dashboard",
+        "exclude": {},
+        "overrides": {},
+    }
+    old = {
+        "time_zone": "UTC",
+        "spike_limit": "4",
+        "entities": ["sensor.a", "sensor.b"],
+        "device_spike_limits": {"sensor.a": "10", "sensor.b": None},
+        "applied": APPLIED,
+    }
+    migrated = migrate_sensor_options(old, default)
+    assert migrated == {
+        "time_zone": "UTC",
+        "spike_limit": "4",
+        "applied": APPLIED,
+        "sensors": {
+            "mode": "filter",
+            "include": {"entity_id": ["sensor.a", "sensor.b"]},
+            "exclude": {},
+            "overrides": {
+                "sensor.a": {"spike_limit": "10"},
+                "sensor.b": {"spike_limit": None},
+            },
+        },
+    }
+    assert "entities" in old  # the input is not modified
+    settings_from_options(migrated)
+
+    empty = {**old, "entities": [], "device_spike_limits": {"sensor.c": "3"}}
+    migrated = migrate_sensor_options(empty, default)
+    assert migrated["sensors"] == {
+        **default,
+        "overrides": {"sensor.c": {"spike_limit": "3"}},
+    }
+    bare = migrate_sensor_options({"time_zone": "UTC", "spike_limit": "4"}, FILTER_ALL)
+    assert bare["sensors"] == FILTER_ALL
+    # Already migrated options are returned unchanged.
+    assert migrate_sensor_options(migrated, FILTER_ALL) == migrated

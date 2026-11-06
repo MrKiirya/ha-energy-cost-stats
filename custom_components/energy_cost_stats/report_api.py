@@ -8,7 +8,7 @@ Design: tasks/013-report-websocket-and-service.md.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
 from functools import partial
@@ -17,7 +17,6 @@ from zoneinfo import ZoneInfo
 
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers import entity_registry as er
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -33,10 +32,16 @@ from .const import (
 from .engine.models import Grouping, ReportRequest
 from .engine.quality import QualitySettings
 from .engine.report import build_report
+from .engine.sensors import upstreams
 from .engine.serialize import DeviceInfo, report_to_json
 from .engine.tariff import TariffSchedule
 from .engine.tariff_config import comparison_schedule
-from .recorder_adapter import HourlySeries, async_read_hourly_changes
+from .recorder_adapter import (
+    HourlySeries,
+    StatisticsStatus,
+    async_read_hourly_changes,
+)
+from .sensor_resolver import async_resolve_sensors, display_name
 
 _HOUR = timedelta(hours=1)
 MIN_YEAR = 1970
@@ -47,7 +52,7 @@ ERROR_MESSAGES = {
     ERR_NOT_LOADED: "Energy Cost Stats is not set up",
     ERR_INVALID_PERIOD: "Invalid period: {detail}",
     ERR_PERIOD_TOO_LONG: "The period is too long (at most {max})",
-    ERR_UNKNOWN_ENTITY: "{entity_id} is not one of the configured energy sensors",
+    ERR_UNKNOWN_ENTITY: "{entity_id} is not one of the selected energy sensors",
     ERR_UNKNOWN_TARIFF: "{tariff_id} is not a configured tariff",
 }
 
@@ -127,18 +132,6 @@ def _zone_name(tz: tzinfo, configured: str) -> str:
     return configured
 
 
-def _display_name(hass: HomeAssistant, series: HourlySeries) -> str:
-    entity_id = series.statistic_id
-    if (state := hass.states.get(entity_id)) is not None:
-        return state.name
-    registered = er.async_get(hass).async_get(entity_id)
-    if registered is not None:
-        registered_name = registered.name or registered.original_name
-        if registered_name:
-            return str(registered_name)
-    return series.name or entity_id
-
-
 @dataclass
 class _Prepared:
     """A validated request with its statistics read once, ready to be priced."""
@@ -149,6 +142,7 @@ class _Prepared:
     quality: QualitySettings
     devices: list[DeviceInfo]
     time_zone: str
+    nested: Mapping[str, str]
 
 
 async def _async_prepare(
@@ -182,18 +176,29 @@ async def _async_prepare(
     elif span > timedelta(days=MAX_PERIOD_DAYS):
         raise ReportError(ERR_PERIOD_TOO_LONG, max=f"{MAX_PERIOD_DAYS} days")
 
-    ids = _select_entities(settings.entities, entities)
+    selection = await async_resolve_sensors(hass, settings.sensors)
+    ids = _select_entities(selection.sensors, entities)
     request = ReportRequest(start_utc, end_utc, tz, grouping)
     read = await async_read_hourly_changes(hass, ids, start_utc, end_utc)
+    # Only devices with readable statistics can account for a nested device's energy.
+    readable = [
+        item.statistic_id for item in read if item.status is StatisticsStatus.OK
+    ]
+    parents = upstreams(readable, selection.parents)
     quality = QualitySettings(
         spike_limit=settings.spike_limit,
-        device_spike_limits=settings.device_spike_limits,
+        device_spike_limits=settings.sensors.spike_limits(),
     )
     devices = [
-        DeviceInfo(item.statistic_id, _display_name(hass, item), item.status.value)
+        DeviceInfo(
+            item.statistic_id,
+            display_name(hass, item.statistic_id, item.name),
+            item.status.value,
+            parents.get(item.statistic_id),
+        )
         for item in read
     ]
-    return _Prepared(runtime, request, read, quality, devices, time_zone)
+    return _Prepared(runtime, request, read, quality, devices, time_zone, parents)
 
 
 async def _async_priced_document(
@@ -207,6 +212,7 @@ async def _async_priced_document(
             schedule,
             [item.series for item in prepared.read],
             quality=prepared.quality,
+            nested=prepared.nested,
         )
     )
     return report_to_json(

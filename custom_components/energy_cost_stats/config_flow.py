@@ -1,7 +1,7 @@
 """Config flow and options flow for Energy Cost Stats."""
 
 import zoneinfo
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import replace
 from datetime import datetime
 from decimal import Decimal, InvalidOperation
@@ -21,8 +21,7 @@ from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.selector import (
     BooleanSelector,
     DateSelector,
-    EntitySelector,
-    EntitySelectorConfig,
+    EntityFilterSelectorConfig,
     IconSelector,
     NumberSelector,
     NumberSelectorConfig,
@@ -31,23 +30,30 @@ from homeassistant.helpers.selector import (
     SelectSelector,
     SelectSelectorConfig,
     SelectSelectorMode,
+    TargetSelector,
+    TargetSelectorConfig,
     TextSelector,
+    TextSelectorConfig,
 )
 from homeassistant.util import dt as dt_util
 
 from . import EnergyCostStatsConfigEntry
 from .const import (
+    CONF_ALL,
     CONF_CHANGE,
     CONF_DELETE,
-    CONF_DEVICE_SPIKE_LIMITS,
-    CONF_EDIT_DEVICE_LIMITS,
-    CONF_ENTITIES,
+    CONF_ENTITY_GLOBS,
+    CONF_EXCLUDE,
     CONF_FROM,
     CONF_ICON,
+    CONF_INCLUDE,
+    CONF_MODE,
+    CONF_SENSORS,
     CONF_SHOW,
     CONF_SIDEBAR,
     CONF_SPIKE_CHECK,
     CONF_SPIKE_LIMIT,
+    CONF_TARGET,
     CONF_TARIFF,
     CONF_TARIFFS,
     CONF_TIME_ZONE,
@@ -60,7 +66,17 @@ from .const import (
     DEFAULT_TITLE,
     DOMAIN,
     MENU_STEPS,
+    MODE_ENERGY_DASHBOARD,
+    MODE_FILTER,
     SUBENTRY_TYPE_TARIFF,
+    TARGET_KEYS,
+)
+from .engine.sensors import (
+    SensorMode,
+    SensorOverride,
+    SensorSettings,
+    SensorTarget,
+    is_valid_glob,
 )
 from .engine.tariff import TariffValidationError
 from .engine.tariff_config import (
@@ -68,6 +84,12 @@ from .engine.tariff_config import (
     Tariff,
     TariffConfig,
     config_from_data,
+)
+from .sensor_resolver import (
+    async_dashboard_devices,
+    async_default_sensor_settings,
+    async_resolve_sensors,
+    describe_selection,
 )
 from .settings import (
     IntegrationSettings,
@@ -80,6 +102,7 @@ from .settings import (
 from .tariff_flow import TariffSubentryFlow
 
 _ENERGY = "energy"
+_KEYWORDS = frozenset({"all", "none"})
 
 
 def _spike_limit_selector() -> NumberSelector:
@@ -151,7 +174,7 @@ def _timezone_selector(names: list[str]) -> SelectSelector:
 class EnergyCostStatsConfigFlow(ConfigFlow, domain=DOMAIN):
     """Initial setup: time zone and global spike limit."""
 
-    VERSION = 2
+    VERSION = 3
     MINOR_VERSION = 1
 
     @staticmethod
@@ -178,11 +201,12 @@ class EnergyCostStatsConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             limit, valid = _global_limit_from_input(user_input, None)
             if valid:
-                settings = IntegrationSettings(
-                    time_zone=user_input[CONF_TIME_ZONE],
-                    spike_limit=limit,
-                    device_spike_limits={},
-                    entities=(),
+                settings = settings_from_options(
+                    {
+                        CONF_TIME_ZONE: user_input[CONF_TIME_ZONE],
+                        CONF_SPIKE_LIMIT: None if limit is None else str(limit),
+                        CONF_SENSORS: await async_default_sensor_settings(self.hass),
+                    }
                 )
                 return self.async_create_entry(
                     title=DEFAULT_TITLE,
@@ -218,7 +242,7 @@ class EnergyCostStatsOptionsFlow(OptionsFlow):
 
     def __init__(self) -> None:
         """Initialize the flow state."""
-        self._entities: tuple[str, ...] = ()
+        self._candidate: SensorSettings | None = None
         self._picked: str | None = None
 
     # ---- shared helpers --------------------------------------------------------
@@ -246,16 +270,6 @@ class EnergyCostStatsOptionsFlow(OptionsFlow):
         if need_tariffs and not tariffs:
             raise _Abort("no_tariffs")
         return settings
-
-    def _is_energy_entity(self, entity_id: str) -> bool:
-        registry_entry = er.async_get(self.hass).async_get(entity_id)
-        if registry_entry is not None:
-            device_class = registry_entry.device_class or (
-                registry_entry.original_device_class
-            )
-            return device_class == _ENERGY
-        state = self.hass.states.get(entity_id)
-        return state is not None and state.attributes.get("device_class") == _ENERGY
 
     def _validate(self, settings: IntegrationSettings) -> TariffConfig:
         """Parse the candidate document exactly as setup will."""
@@ -330,116 +344,203 @@ class EnergyCostStatsOptionsFlow(OptionsFlow):
     async def async_step_sensors(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Select the energy sensors (and optionally edit per-device limits)."""
+        """Show the current selection and offer to change it or the limits."""
+        try:
+            current = self._load()
+        except _Abort as err:
+            return self.async_abort(reason=err.reason)
+        self._candidate = None
+        selection = await async_resolve_sensors(self.hass, current.sensors)
+        count, listing = describe_selection(self.hass, selection)
+        return self.async_show_menu(
+            step_id="sensors",
+            menu_options=["sensors_select", "device_limits"],
+            description_placeholders={
+                "count": str(count),
+                "sensors": listing,
+            },
+        )
+
+    def _parse_selection(
+        self, user_input: Mapping[str, Any], overrides: Mapping[str, SensorOverride]
+    ) -> tuple[SensorSettings | None, dict[str, str], str]:
+        """Candidate settings from the form, or ``(None, errors, glob)``."""
+        try:
+            mode = SensorMode(user_input[CONF_MODE])
+        except ValueError:
+            return None, {CONF_MODE: "invalid_mode"}, ""
+        include_input: Mapping[str, Any] = user_input.get(CONF_INCLUDE) or {}
+        exclude_input: Mapping[str, Any] = user_input.get(CONF_EXCLUDE) or {}
+        include: SensorTarget | None = None
+        registry = er.async_get(self.hass)
+
+        def resolve(value: str) -> str | None:
+            return er.async_resolve_entity_id(registry, value)
+
+        try:
+            exclude = _target_from_input(exclude_input, resolve)
+            if mode is SensorMode.FILTER and not include_input.get(CONF_ALL):
+                include = _target_from_input(include_input, resolve)
+                if include.is_empty:
+                    return None, {"base": "nothing_included"}, ""
+        except _InvalidGlob as err:
+            return None, {"base": "invalid_glob"}, err.glob
+        except _InvalidTarget:
+            return None, {"base": "invalid_target"}, ""
+        candidate = SensorSettings(
+            mode=mode, include=include, exclude=exclude, overrides=overrides
+        )
+        return candidate, {}, ""
+
+    async def async_step_sensors_select(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Choose the mode and the include / exclude rules (previewed before saving)."""
         try:
             current = self._load()
         except _Abort as err:
             return self.async_abort(reason=err.reason)
 
         errors: dict[str, str] = {}
+        glob = ""
         if user_input is not None:
-            new_entities = [
-                entity_id
-                for entity_id in user_input.get(CONF_ENTITIES, [])
-                if entity_id not in current.entities
-                and not self._is_energy_entity(entity_id)
-            ]
-            if new_entities:
-                errors[CONF_ENTITIES] = "not_energy_entity"
-            else:
-                entities = tuple(dict.fromkeys(user_input.get(CONF_ENTITIES, [])))
-                kept = {
-                    key: value
-                    for key, value in current.device_spike_limits.items()
-                    if key in entities
-                }
-                self._entities = entities
-                if user_input.get(CONF_EDIT_DEVICE_LIMITS, False) and entities:
-                    return await self.async_step_device_limits()
-                return self._save(
-                    replace(current, entities=entities, device_spike_limits=kept)
-                )
+            candidate, errors, glob = self._parse_selection(
+                user_input, current.sensors.overrides
+            )
+            if (
+                candidate is not None
+                and candidate.mode is SensorMode.ENERGY_DASHBOARD
+                and not await async_dashboard_devices(self.hass)
+            ):
+                candidate = None
+                errors = {CONF_MODE: "no_dashboard_devices"}
+            if candidate is not None:
+                self._candidate = candidate
+                return await self.async_step_sensors_preview()
 
         suggested: Mapping[str, Any]
         if user_input is not None:
             suggested = user_input
         else:
-            suggested = {CONF_ENTITIES: list(current.entities)}
+            suggested = _selection_to_form(self._candidate or current.sensors)
+        target = TargetSelector(
+            TargetSelectorConfig(
+                entity=EntityFilterSelectorConfig(domain="sensor", device_class=_ENERGY)
+            )
+        )
+        globs = TextSelector(TextSelectorConfig(multiple=True))
         schema = vol.Schema(
             {
-                vol.Optional(CONF_ENTITIES): EntitySelector(
-                    EntitySelectorConfig(
-                        domain="sensor", device_class=_ENERGY, multiple=True
+                vol.Required(CONF_MODE): SelectSelector(
+                    SelectSelectorConfig(
+                        options=[MODE_ENERGY_DASHBOARD, MODE_FILTER],
+                        mode=SelectSelectorMode.LIST,
+                        translation_key="sensor_mode",
                     )
                 ),
-                vol.Required(CONF_EDIT_DEVICE_LIMITS, default=False): BooleanSelector(),
+                vol.Required(CONF_INCLUDE): section(
+                    vol.Schema(
+                        {
+                            vol.Optional(CONF_ALL): BooleanSelector(),
+                            vol.Optional(CONF_TARGET): target,
+                            vol.Optional(CONF_ENTITY_GLOBS): globs,
+                        }
+                    ),
+                    {"collapsed": False},
+                ),
+                vol.Required(CONF_EXCLUDE): section(
+                    vol.Schema(
+                        {
+                            vol.Optional(CONF_TARGET): target,
+                            vol.Optional(CONF_ENTITY_GLOBS): globs,
+                        }
+                    ),
+                    {"collapsed": True},
+                ),
             }
         )
         return self.async_show_form(
-            step_id="sensors",
+            step_id="sensors_select",
             data_schema=self.add_suggested_values_to_schema(schema, suggested),
             errors=errors,
+            description_placeholders={"glob": glob},
         )
 
-    async def async_step_device_limits(
+    async def async_step_sensors_preview(
         self, user_input: dict[str, Any] | None = None
     ) -> ConfigFlowResult:
-        """Set an optional spike limit per selected entity."""
+        """Show what the pending selection resolves to."""
+        if self._candidate is None:
+            return await self.async_step_sensors()
+        selection = await async_resolve_sensors(self.hass, self._candidate)
+        count, listing = describe_selection(self.hass, selection)
+        return self.async_show_menu(
+            step_id="sensors_preview",
+            menu_options=["sensors_save", "sensors_select"],
+            description_placeholders={"count": str(count), "sensors": listing},
+        )
+
+    async def async_step_sensors_save(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Store the pending selection on top of the current options."""
+        if self._candidate is None:
+            return await self.async_step_sensors()
         try:
             current = self._load()
         except _Abort as err:
             return self.async_abort(reason=err.reason)
-        entities = self._entities
-        if not entities:
-            return await self.async_step_sensors()
-        settings = replace(
-            current,
-            entities=entities,
-            device_spike_limits={
-                k: v for k, v in current.device_spike_limits.items() if k in entities
-            },
-        )
+        sensors = replace(self._candidate, overrides=current.sensors.overrides)
+        return self._save(replace(current, sensors=sensors))
+
+    async def async_step_device_limits(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Set an optional spike limit per selected sensor (and stale override)."""
+        try:
+            current = self._load()
+        except _Abort as err:
+            return self.async_abort(reason=err.reason)
+        selection = await async_resolve_sensors(self.hass, current.sensors)
+        shown = list(dict.fromkeys([*selection.sensors, *current.sensors.overrides]))
+        if not shown:
+            return self.async_abort(reason="no_sensors")
 
         if user_input is not None:
-            limits: dict[str, Decimal | None] = {}
+            overrides = dict(current.sensors.overrides)
             errors: dict[str, str] = {}
-            for entity_id in settings.entities:
+            for entity_id in shown:
                 if entity_id not in user_input:
+                    overrides.pop(entity_id, None)
                     continue
                 value = _finite(user_input[entity_id])
                 if value is None or value < 0:
                     errors[entity_id] = "invalid_limit"
                     continue
-                limits[entity_id] = None if value == 0 else value
-            if errors:
-                return self._show_device_limits(settings, user_input, errors)
-            return self._save(replace(settings, device_spike_limits=limits))
+                overrides[entity_id] = SensorOverride(None if value == 0 else value)
+            if not errors:
+                return self._save(
+                    replace(
+                        current, sensors=replace(current.sensors, overrides=overrides)
+                    )
+                )
+            return self._show_device_limits(shown, user_input, errors)
 
-        return self._show_device_limits(settings, None, {})
+        suggested: dict[str, Any] = {}
+        for entity_id, item in current.sensors.overrides.items():
+            suggested[entity_id] = (
+                0 if item.spike_limit is None else _limit_to_number(item.spike_limit)
+            )
+        return self._show_device_limits(shown, suggested, {})
 
     def _show_device_limits(
         self,
-        settings: IntegrationSettings,
-        user_input: Mapping[str, Any] | None,
+        shown: Sequence[str],
+        suggested: Mapping[str, Any],
         errors: dict[str, str],
     ) -> ConfigFlowResult:
-        suggested: dict[str, Any] = {}
-        if user_input is not None:
-            suggested = dict(user_input)
-        else:
-            stored = dict(self.config_entry.options.get(CONF_DEVICE_SPIKE_LIMITS, {}))
-            for entity_id in settings.entities:
-                if entity_id not in stored:
-                    continue
-                raw = stored[entity_id]
-                suggested[entity_id] = (
-                    0 if raw is None else _limit_to_number(_to_decimal(raw))
-                )
         schema = vol.Schema(
-            {
-                vol.Optional(entity_id): _device_limit_selector()
-                for entity_id in settings.entities
-            }
+            {vol.Optional(entity_id): _device_limit_selector() for entity_id in shown}
         )
         return self.async_show_form(
             step_id="device_limits",
@@ -771,6 +872,84 @@ class EnergyCostStatsOptionsFlow(OptionsFlow):
                 "detail": detail,
             },
         )
+
+
+class _InvalidTarget(Exception):
+    """A target selector value is not made of strings."""
+
+
+class _InvalidGlob(Exception):
+    """An entity glob is not acceptable."""
+
+    def __init__(self, glob: str) -> None:
+        """Keep the offending pattern."""
+        super().__init__(glob)
+        self.glob = glob
+
+
+def _string_list(value: Any) -> tuple[str, ...]:
+    """A selector value (string or list of strings) as unique non-empty strings."""
+    if value is None:
+        return ()
+    if not isinstance(value, (str, list, tuple)):
+        raise _InvalidTarget
+    items: list[Any] = [value] if isinstance(value, str) else list(value)  # pyright: ignore[reportUnknownArgumentType]
+    if not all(isinstance(item, str) for item in items):
+        raise _InvalidTarget
+    return tuple(dict.fromkeys(item for item in items if item))
+
+
+def _target_from_input(
+    data: Mapping[str, Any], resolve: Callable[[str], str | None]
+) -> SensorTarget:
+    """Normalize a form section (target selector value plus glob list).
+
+    Registry ids in ``entity_id`` are resolved to entity ids with ``resolve``; the
+    ``all`` / ``none`` keywords and anything unresolvable are rejected.
+    """
+    target: Mapping[str, Any] = data.get(CONF_TARGET) or {}
+    if not isinstance(target, Mapping):
+        raise _InvalidTarget
+    values = {key: _string_list(target.get(key)) for key in TARGET_KEYS[:-1]}
+    if any(item in _KEYWORDS for items in values.values() for item in items):
+        raise _InvalidTarget
+    resolved = [resolve(entity_id) for entity_id in values["entity_id"]]
+    if None in resolved:
+        raise _InvalidTarget
+    values["entity_id"] = tuple(dict.fromkeys(item for item in resolved if item))
+    globs = tuple(
+        dict.fromkeys(
+            glob.strip()
+            for glob in _string_list(data.get(CONF_ENTITY_GLOBS))
+            if glob.strip()
+        )
+    )
+    for glob in globs:
+        if not is_valid_glob(glob):
+            raise _InvalidGlob(glob)
+    return SensorTarget(**values, entity_globs=globs)
+
+
+def _target_to_form(target: SensorTarget | None) -> dict[str, Any]:
+    if target is None:
+        return {}
+    selected = {
+        key: list(getattr(target, key))
+        for key in TARGET_KEYS[:-1]
+        if getattr(target, key)
+    }
+    return {CONF_TARGET: selected, CONF_ENTITY_GLOBS: list(target.entity_globs)}
+
+
+def _selection_to_form(sensors: SensorSettings) -> dict[str, Any]:
+    return {
+        CONF_MODE: sensors.mode.value,
+        CONF_INCLUDE: {
+            CONF_ALL: sensors.include is None,
+            **_target_to_form(sensors.include),
+        },
+        CONF_EXCLUDE: _target_to_form(sensors.exclude),
+    }
 
 
 class _Abort(Exception):

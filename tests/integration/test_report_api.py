@@ -14,6 +14,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntryState, ConfigSubentryData
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import entity_registry as er
 from homeassistant.setup import async_setup_component
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -21,6 +22,7 @@ from custom_components.energy_cost_stats import report_api
 from custom_components.energy_cost_stats.const import DOMAIN
 
 SeedStatistics = Callable[..., Awaitable[None]]
+SetDashboard = Callable[[list[dict[str, Any]]], Awaitable[None]]
 HOUR = timedelta(hours=1)
 PLUG_01 = "sensor.plug_01"
 PLUG_02 = "sensor.plug_02"
@@ -46,12 +48,22 @@ TARIFF: dict[str, Any] = {
 DAY = {"start": "2026-01-15", "end": "2026-01-16", "grouping": "day"}
 
 
+def sensors(
+    ids: list[str] | None = None, overrides: dict[str, str | None] | None = None
+) -> dict[str, Any]:
+    return {
+        "mode": "filter",
+        "include": {"entity_id": ids if ids is not None else [PLUG_01, PLUG_02]},
+        "exclude": {},
+        "overrides": {k: {"spike_limit": v} for k, v in (overrides or {}).items()},
+    }
+
+
 def options(**changes: Any) -> dict[str, Any]:
     base: dict[str, Any] = {
         "time_zone": "Europe/Moscow",
         "spike_limit": "4",
-        "device_spike_limits": {},
-        "entities": [PLUG_01, PLUG_02],
+        "sensors": sensors(),
     }
     return {**base, **changes}
 
@@ -78,7 +90,7 @@ async def setup_entry(
         domain=DOMAIN,
         data={},
         options=base,
-        version=2,
+        version=3,
         subentries_data=[tariff_subentry()] if plans else [],
     )
     entry.add_to_hass(hass)
@@ -147,8 +159,8 @@ async def test_ws_report_two_zone_day(hass: HomeAssistant, hass_ws_client):
     assert doc["currency"] == hass.config.currency
     assert doc["issues"] == []
     assert doc["devices"] == [
-        {"entity_id": PLUG_01, "name": "Plug 01", "statistics": "ok"},
-        {"entity_id": PLUG_02, "name": PLUG_02, "statistics": "ok"},
+        {"entity_id": PLUG_01, "name": "Plug 01", "statistics": "ok", "upstream": None},
+        {"entity_id": PLUG_02, "name": PLUG_02, "statistics": "ok", "upstream": None},
     ]
     assert len(doc["buckets"]) == 1
     bucket = doc["buckets"][0]
@@ -389,7 +401,7 @@ async def test_quality_settings_applied(
     assert any(i["kind"] == "estimated" for i in doc["issues"])
 
     hass.config_entries.async_update_entry(
-        entry, options=options(device_spike_limits={PLUG_02: None})
+        entry, options=options(sensors=sensors(overrides={PLUG_02: None}))
     )
     await hass.async_block_till_done()
     doc = await ws_report(hass, hass_ws_client)
@@ -410,7 +422,9 @@ async def test_device_without_statistics(
     await seed_statistics("sensor.plug_04", ramp(1.0), unit="W")
     await setup_entry(
         hass,
-        opts=options(entities=[PLUG_01, PLUG_02, "sensor.plug_03", "sensor.plug_04"]),
+        opts=options(
+            sensors=sensors([PLUG_01, PLUG_02, "sensor.plug_03", "sensor.plug_04"])
+        ),
     )
     doc = await ws_report(hass, hass_ws_client)
     assert [d["statistics"] for d in doc["devices"]] == [
@@ -475,3 +489,125 @@ async def test_no_entities_created(hass: HomeAssistant, hass_ws_client):
 
     registry = er.async_get(hass)
     assert not [e for e in registry.entities.values() if e.platform == DOMAIN]
+
+
+async def test_report_uses_resolved_selection(
+    hass: HomeAssistant, hass_ws_client, seed_statistics: SeedStatistics
+):
+    registry = er.async_get(hass)
+    for entity_id in (PLUG_01, PLUG_02):
+        registry.async_get_or_create(
+            "sensor",
+            "test",
+            entity_id,
+            suggested_object_id=entity_id.split(".")[1],
+            original_device_class="energy",
+        )
+        await seed_statistics(entity_id, ramp(1.0))
+    await seed_statistics("sensor.not_registered", ramp(1.0))
+    all_sensors = {
+        "mode": "filter",
+        "include": "all",
+        "exclude": {},
+        "overrides": {},
+    }
+    await setup_entry(hass, opts=options(sensors=all_sensors))
+
+    async def ids(**fields: Any) -> list[str]:
+        doc = await ws_report(hass, hass_ws_client, **fields)
+        return [d["entity_id"] for d in doc["devices"]]
+
+    assert await ids() == [PLUG_01, PLUG_02]
+    assert await ids(entities=[PLUG_02]) == [PLUG_02]
+    msg = await ws_call(hass, hass_ws_client, **DAY, entities=["sensor.not_registered"])
+    assert not msg["success"]
+    assert msg["error"]["code"] == "unknown_entity"
+
+
+async def test_report_nested_totals(
+    hass: HomeAssistant,
+    hass_ws_client,
+    seed_statistics: SeedStatistics,
+    set_dashboard: SetDashboard,
+):
+    await seed_statistics(PLUG_01, ramp(1.0))
+    await seed_statistics(PLUG_02, ramp(2.0))
+    await set_dashboard(
+        [
+            {"stat_consumption": PLUG_01},
+            {"stat_consumption": PLUG_02, "included_in_stat": PLUG_01},
+        ]
+    )
+    dashboard = {"mode": "energy_dashboard", "exclude": {}, "overrides": {}}
+    await setup_entry(hass, opts=options(sensors=dashboard))
+    doc = await ws_report(hass, hass_ws_client)
+    assert [(d["entity_id"], d["upstream"]) for d in doc["devices"]] == [
+        (PLUG_01, None),
+        (PLUG_02, PLUG_01),
+    ]
+    bucket = doc["buckets"][0]
+    assert device_row(bucket, PLUG_02)["kwh"] == "48.000"
+    assert bucket["total"]["kwh"] == "24.000"
+    assert doc["totals"]["total"]["kwh"] == "24.000"
+
+    only_child = await ws_report(hass, hass_ws_client, entities=[PLUG_02])
+    assert only_child["devices"][0]["upstream"] is None
+    assert only_child["totals"]["total"]["kwh"] == "48.000"
+
+
+@pytest.mark.parametrize(
+    ("unit", "seed_parent"), [("kWh", False), ("W", True)], ids=["none", "unsupported"]
+)
+async def test_nested_child_counts_when_upstream_unreadable(
+    hass: HomeAssistant,
+    hass_ws_client,
+    seed_statistics: SeedStatistics,
+    unit: str,
+    seed_parent: bool,
+    set_dashboard: SetDashboard,
+):
+    await seed_statistics(PLUG_02, ramp(2.0))
+    if seed_parent:
+        await seed_statistics(PLUG_01, ramp(1.0), unit=unit)
+    await set_dashboard(
+        [
+            {"stat_consumption": PLUG_01},
+            {"stat_consumption": PLUG_02, "included_in_stat": PLUG_01},
+        ]
+    )
+    dashboard = {"mode": "energy_dashboard", "exclude": {}, "overrides": {}}
+    await setup_entry(hass, opts=options(sensors=dashboard))
+    doc = await ws_report(hass, hass_ws_client)
+    assert [(d["entity_id"], d["upstream"]) for d in doc["devices"]] == [
+        (PLUG_01, None),
+        (PLUG_02, None),
+    ]
+    assert doc["totals"]["total"]["kwh"] == "48.000"
+
+
+async def test_report_after_v2_migration(
+    hass: HomeAssistant, hass_ws_client, seed_statistics: SeedStatistics
+):
+    await seed_statistics(PLUG_01, ramp(1.0))
+    await seed_statistics(PLUG_02, ramp(2.0))
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        data={},
+        options={
+            "time_zone": "Europe/Moscow",
+            "spike_limit": "4",
+            "device_spike_limits": {PLUG_02: None},
+            "entities": [PLUG_02, PLUG_01],
+            "applied": [{"from": "2026-01-01", "tariff": "two_zone"}],
+        },
+        version=2,
+        subentries_data=[tariff_subentry()],
+    )
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    assert entry.version == 3
+    doc = await ws_report(hass, hass_ws_client)
+    # A filter on the old ids: reports exactly those sensors (sorted by id).
+    assert [d["entity_id"] for d in doc["devices"]] == [PLUG_01, PLUG_02]
+    assert doc["totals"]["total"]["kwh"] == "72.000"

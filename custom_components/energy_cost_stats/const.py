@@ -10,15 +10,20 @@ DEFAULT_TITLE: Final = "Energy Cost Stats"
 # Option keys (entry.options).
 CONF_TIME_ZONE: Final = "time_zone"
 CONF_SPIKE_LIMIT: Final = "spike_limit"
-CONF_DEVICE_SPIKE_LIMITS: Final = "device_spike_limits"
-CONF_ENTITIES: Final = "entities"
+CONF_SENSORS: Final = "sensors"
 CONF_APPLIED: Final = "applied"
 CONF_COMPARE: Final = "compare"
 CONF_PANEL: Final = "panel"
 
 # Form-only keys (never stored).
 CONF_SPIKE_CHECK: Final = "spike_check"
-CONF_EDIT_DEVICE_LIMITS: Final = "edit_device_limits"
+CONF_MODE: Final = "mode"
+CONF_INCLUDE: Final = "include"
+CONF_EXCLUDE: Final = "exclude"
+CONF_OVERRIDES: Final = "overrides"
+CONF_ALL: Final = "all"
+CONF_TARGET: Final = "target"
+CONF_ENTITY_GLOBS: Final = "entity_globs"
 
 CONF_USE_DEFAULT: Final = "use_default"
 CONF_TARIFFS: Final = "tariffs"
@@ -38,6 +43,21 @@ DEFAULT_PANEL_ICON: Final = "mdi:cash-multiple"
 
 # Options menu step ids.
 MENU_STEPS: Final = ("sensors", "applied", "compare", "general")
+
+# Sensor selection (docs/SPEC.md §2): stored values and target keys.
+MODE_ENERGY_DASHBOARD: Final = "energy_dashboard"
+MODE_FILTER: Final = "filter"
+INCLUDE_ALL: Final = "all"
+TARGET_KEYS: Final = (
+    "entity_id",
+    "device_id",
+    "area_id",
+    "floor_id",
+    "label_id",
+    "entity_globs",
+)
+# Sensors listed in an options description before "... and N more".
+PREVIEW_LIMIT: Final = 30
 
 # Default spike limit in kWh per hour (SPEC §5).
 DEFAULT_SPIKE_LIMIT: Final = Decimal("4")

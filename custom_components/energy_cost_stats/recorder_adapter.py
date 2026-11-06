@@ -209,3 +209,17 @@ def _read(
             )
         )
     return tuple(results)
+
+
+def _energy_statistic_ids(hass: HomeAssistant) -> frozenset[str]:
+    metadata = get_metadata(hass, statistic_type="sum", statistic_source="recorder")
+    return frozenset(
+        statistic_id
+        for statistic_id, (_, meta) in metadata.items()
+        if classify_metadata(meta) is StatisticsStatus.OK
+    )
+
+
+async def async_energy_statistic_ids(hass: HomeAssistant) -> frozenset[str]:
+    """Recorder statistic ids with sum statistics in an energy unit."""
+    return await get_instance(hass).async_add_executor_job(_energy_statistic_ids, hass)

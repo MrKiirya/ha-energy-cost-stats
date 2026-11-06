@@ -6,9 +6,13 @@
 
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 import pytest
+from homeassistant.components.energy.data import (
+    EnergyPreferencesUpdate,
+    async_get_manager,
+)
 from homeassistant.components.recorder.models import (
     StatisticData,
     StatisticMeanType,
@@ -24,6 +28,7 @@ from pytest_homeassistant_custom_component.components.recorder.common import (
 )
 
 SeedStatistics = Callable[..., Awaitable[None]]
+SetDashboard = Callable[[list[dict[str, Any]]], Awaitable[None]]
 
 
 @pytest.fixture(autouse=True)
@@ -80,3 +85,20 @@ def seed_statistics(hass: HomeAssistant) -> SeedStatistics:
         await async_wait_recording_done(hass)
 
     return seed
+
+
+@pytest.fixture
+def set_dashboard(hass: HomeAssistant) -> SetDashboard:
+    """Return ``set(devices)`` saving Energy dashboard ``device_consumption`` entries.
+
+    The preferences update is a TypedDict whose keys differ between Home Assistant
+    versions (``included_in_stat`` exists from 2025.4), so the plain dict is cast once
+    here; the manager validates it with its own schema.
+    """
+
+    async def set_devices(devices: list[dict[str, Any]]) -> None:
+        manager = await async_get_manager(hass)
+        update = cast(EnergyPreferencesUpdate, {"device_consumption": devices})
+        await manager.async_update(update)
+
+    return set_devices
