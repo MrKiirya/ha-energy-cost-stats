@@ -1,6 +1,6 @@
 # 016 — Follow Home Assistant's energy date picker
 
-Status: in-review (proposal from the night run; the author asked whether HA's standard picker can be used)
+Status: in-review (proposal from the night run; round 1: 3 required — fixed)
 Roadmap: stage 4 (card)
 Spec sections: SPEC §4.1
 
@@ -31,7 +31,7 @@ keeps its own picker.
 | card | `energy-period.test.ts` | key lookup (`collection_key`, `energy_<dashboard>`), shape check; dates from bounds in another zone (UTC+5 / UTC−5 browser vs Moscow report); open end = today; invalid ranges ignored; card follows the picker and its changes; own picker hidden; `collection_key`; `period_source: card` ignores it; fallback + note for `energy`; late-appearing collection; unsubscribe on removal; config validation |
 
 ## Acceptance criteria
-- [x] vitest 113 passed, tsc clean, bundle up to date.
+- [x] vitest 116 passed, tsc clean, bundle up to date.
 - [x] Dev HA 2026.9: `vertical-stack` [`energy-date-selection`, cost card]: the card shows the picker's day; HA's
       "previous" arrow moves both (Playwright screenshots).
 - [ ] CI green on the PR.
@@ -41,9 +41,16 @@ keeps its own picker.
 - HA's "compare with previous period" mode of the picker (ignored).
 
 ## Open questions
-- Default `auto` (follow when present) vs opt-in `energy`.
+- Following is opt-in (`period_source: energy`) after review round 1 (every HA energy card creates the collection,
+  so "follow when present" could lock the card without a visible picker). A real picker detection would need
+  walking HA's view DOM — left out; the author may prefer it.
 
 ## Implementation notes
 - The collection is looked up in `willUpdate` on every update until found (HA sets a new `hass` on each state
   change), so the order of the cards does not matter; the initial period comes from the collection when it is
   already there.
+- Review round 1: (R1) `setConfig` detaches and re-attaches (title edit, other `collection_key`, back to `card`);
+  (R2) following is opt-in, default `card`; (R3) dates are read in the zone HA used for the bounds
+  (`hass.locale.time_zone` `server` → HA's zone, else the browser's) instead of "12 h inside", which failed for zones
+  12 h or more apart. Suggestions applied: `hass.panelUrl` for the dashboard path; a collection whose
+  `subscribe()` threw is not retried on every update; `collection_key` must start with `energy_`.

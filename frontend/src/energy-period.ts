@@ -21,16 +21,27 @@ export interface EnergyCollectionLike {
 }
 
 const PREFIX = "energy_";
-const HALF_DAY_MS = 12 * 3_600_000;
 
 /** Connection property names to look at, most specific first. */
 export function collectionProperties(
   collectionKey: string | undefined,
-  pathname: string,
+  panelUrl: string | undefined,
 ): string[] {
   if (collectionKey) return [`_${collectionKey}`];
-  const panelUrl = pathname.split("/").filter(Boolean)[0];
   return panelUrl ? [`_${PREFIX}${panelUrl}`] : [];
+}
+
+/** HA requires custom collection keys to start with `energy_` (validateEnergyCollectionKey). */
+export function isValidCollectionKey(key: string): boolean {
+  return key.startsWith(PREFIX);
+}
+
+/** The dashboard's URL path: `hass.panelUrl`, else the first segment of the page path. */
+export function dashboardPath(
+  panelUrl: string | undefined,
+  pathname: string,
+): string | undefined {
+  return panelUrl || pathname.split("/").filter(Boolean)[0];
 }
 
 function isCollection(value: unknown): value is EnergyCollectionLike {
@@ -42,10 +53,10 @@ function isCollection(value: unknown): value is EnergyCollectionLike {
 export function findEnergyCollection(
   connection: unknown,
   collectionKey: string | undefined,
-  pathname: string,
+  panelUrl: string | undefined,
 ): EnergyCollectionLike | undefined {
   if (!connection || typeof connection !== "object") return undefined;
-  for (const property of collectionProperties(collectionKey, pathname)) {
+  for (const property of collectionProperties(collectionKey, panelUrl)) {
     const value = (connection as Record<string, unknown>)[property];
     if (isCollection(value)) return value;
   }
@@ -53,22 +64,33 @@ export function findEnergyCollection(
 }
 
 /**
- * The collection's range as calendar dates in `timeZone`. HA keeps `start` at a
- * midnight and `end` at the end of the last day (`23:59:59.999`) — in the
- * browser's or the server's time zone, depending on the user's profile — and an
- * open `end` means "until now". Reading the dates 12 hours inside the range makes
- * the result independent of which of those zones HA used (offsets differ by less
- * than 12 h in practice). Returns `undefined` for an unusable range.
+ * The zone HA computed the picker's bounds in: the server's time zone when the
+ * user's profile says `server`, else the browser's (`local`, `undefined` here).
+ * HA frontend: `calcDate` / `resolveTimeZone`.
+ */
+export function pickerTimeZone(
+  locale: { time_zone?: string } | undefined,
+  serverTimeZone: string | undefined,
+): string | undefined {
+  return locale?.time_zone === "server" ? serverTimeZone : undefined;
+}
+
+/**
+ * The collection's range as the calendar dates the user picked: HA keeps `start`
+ * at a midnight and `end` at the end of the last day (`23:59:59.999`) in
+ * `pickerZone` (see `pickerTimeZone`); an open `end` means "until today". The
+ * dates are then reported in the integration's time zone like any other period.
+ * Returns `undefined` for an unusable range.
  */
 export function collectionPeriod(
   data: { start: Date; end?: Date },
-  timeZone: string | undefined,
+  pickerZone: string | undefined,
 ): Period | undefined {
   if (!(data.start instanceof Date) || Number.isNaN(data.start.getTime())) return undefined;
-  const start = todayIn(timeZone, new Date(data.start.getTime() + HALF_DAY_MS));
+  const start = todayIn(pickerZone, data.start);
   const end =
     data.end instanceof Date && !Number.isNaN(data.end.getTime())
-      ? todayIn(timeZone, new Date(data.end.getTime() - HALF_DAY_MS))
-      : todayIn(timeZone);
+      ? todayIn(pickerZone, data.end)
+      : todayIn(pickerZone);
   return end < start ? undefined : { start, end };
 }

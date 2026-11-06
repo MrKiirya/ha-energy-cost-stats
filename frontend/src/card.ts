@@ -8,7 +8,10 @@ import { LitElement, css, html, nothing, type PropertyValues, type TemplateResul
 import { live } from "lit/directives/live.js";
 import {
   collectionPeriod,
+  dashboardPath,
   findEnergyCollection,
+  isValidCollectionKey,
+  pickerTimeZone,
   type EnergyCollectionLike,
 } from "./energy-period";
 import { Strings, type StringKey } from "./i18n";
@@ -63,18 +66,19 @@ export interface CardConfig {
   /** Tariff scenarios to compare with the configured plans (1-5). */
   compare?: ScenarioConfig[];
   /**
-   * Where the period comes from: `auto` (default) follows Home Assistant's energy
-   * date picker (`energy-date-selection` card) on the same dashboard when there is
-   * one, else the card's own picker; `energy` expects that picker; `card` always
-   * uses the card's own picker.
+   * Where the period comes from: `card` (default) — the card's own picker;
+   * `energy` — Home Assistant's energy date picker (`energy-date-selection` card)
+   * on the same dashboard, falling back to the own picker (with a note) when it
+   * is not there. Opt-in because every HA energy card creates the collection the
+   * picker uses, so its presence does not prove a picker is shown.
    */
   period_source?: PeriodSource;
   /** `collection_key` of the energy date picker to follow (when it sets one). */
   collection_key?: string;
 }
 
-type PeriodSource = "auto" | "energy" | "card";
-const PERIOD_SOURCES: PeriodSource[] = ["auto", "energy", "card"];
+type PeriodSource = "card" | "energy";
+const PERIOD_SOURCES: PeriodSource[] = ["card", "energy"];
 
 /** While the period contains today, re-fetch this often (new hours get compiled). */
 const REFRESH_MS = 10 * 60 * 1000;
@@ -105,10 +109,12 @@ export class EnergyCostStatsCard extends LitElement {
     _comparisonError: { state: true },
   };
 
-  hass?: HassLike & { connection?: unknown };
+  hass?: HassLike & { connection?: unknown; panelUrl?: string };
   /** HA's energy collection being followed (period_source auto/energy). */
   private _energy?: EnergyCollectionLike;
   private _unsubEnergy?: () => void;
+  /** The collection's subscribe() threw: do not retry it on every update. */
+  private _energyBroken?: EnergyCollectionLike;
   private _config?: CardConfig;
   private _period?: Period;
   private _groupingChoice: GroupingChoice = "auto";
@@ -154,8 +160,11 @@ export class EnergyCostStatsCard extends LitElement {
     if (config.period_source !== undefined && !PERIOD_SOURCES.includes(config.period_source)) {
       throw new Error(`Unknown period_source: ${String(config.period_source)}`);
     }
-    if (config.collection_key !== undefined && typeof config.collection_key !== "string") {
-      throw new Error("collection_key must be text");
+    if (
+      config.collection_key !== undefined &&
+      (typeof config.collection_key !== "string" || !isValidCollectionKey(config.collection_key))
+    ) {
+      throw new Error('collection_key must start with "energy_" (as in the energy date picker)');
     }
     if (config.compare !== undefined) {
       if (!Array.isArray(config.compare) || config.compare.length < 1 || config.compare.length > MAX_SCENARIOS) {
@@ -176,6 +185,11 @@ export class EnergyCostStatsCard extends LitElement {
       }
     }
     const previous = this._config;
+    if (previous) {
+      // period_source or collection_key may have changed: attach again from scratch.
+      this._detachEnergy();
+      this._energyBroken = undefined;
+    }
     this._config = config;
     this._groupingChoice = config.grouping ?? "auto";
     if (previous && this._period) {
@@ -256,16 +270,19 @@ export class EnergyCostStatsCard extends LitElement {
    * every update until found.
    */
   private _attachEnergy(): void {
-    if ((this._config?.period_source ?? "auto") === "card") return;
+    if (this._config?.period_source !== "energy") return;
     const collection = findEnergyCollection(
       this.hass?.connection,
-      this._config?.collection_key,
-      window.location.pathname,
+      this._config.collection_key,
+      dashboardPath(this.hass?.panelUrl, window.location.pathname),
     );
-    if (!collection) return;
+    if (!collection || collection === this._energyBroken) return;
     this._energy = collection;
     const follow = (data: { start: Date; end?: Date }) => {
-      const period = collectionPeriod(data, this._timeZone);
+      const period = collectionPeriod(
+        data,
+        pickerTimeZone(this.hass?.locale, this.hass?.config?.time_zone),
+      );
       if (!period) return;
       if (period.start !== this._period?.start || period.end !== this._period?.end) {
         this._customOpen = false;
@@ -276,8 +293,9 @@ export class EnergyCostStatsCard extends LitElement {
     try {
       this._unsubEnergy = collection.subscribe(follow);
     } catch {
-      // A changed internal API: fall back to the card's own picker.
+      // A changed internal API: fall back to the card's own picker, once.
       this._energy = undefined;
+      this._energyBroken = collection;
     }
   }
 
