@@ -64,15 +64,19 @@ async def setup_entry(
     options: dict[str, Any] = {
         "time_zone": "Europe/Moscow",
         "spike_limit": "4",
-        "device_spike_limits": {},
-        "entities": [],
+        "sensors": {
+            "mode": "filter",
+            "include": "all",
+            "exclude": {},
+            "overrides": {},
+        },
         **opts,
     }
     entry = MockConfigEntry(
         domain=DOMAIN,
         data={},
         options=options,
-        version=2,
+        version=3,
         subentries_data=[
             ConfigSubentryData(
                 data=copy.deepcopy(t),

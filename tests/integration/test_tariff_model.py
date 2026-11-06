@@ -61,8 +61,12 @@ def options(**changes: Any) -> dict[str, Any]:
     base: dict[str, Any] = {
         "time_zone": "Europe/Moscow",
         "spike_limit": "4",
-        "device_spike_limits": {},
-        "entities": [PLUG_01],
+        "sensors": {
+            "mode": "filter",
+            "include": {"entity_id": [PLUG_01]},
+            "exclude": {},
+            "overrides": {},
+        },
     }
     return {**base, **changes}
 
@@ -80,7 +84,7 @@ async def setup_v2(
         domain=DOMAIN,
         data={},
         options=options(**opts),
-        version=2,
+        version=3,
         subentries_data=[tariff_subentry(t) for t in tariffs],
     )
     entry.add_to_hass(hass)
@@ -154,7 +158,7 @@ async def test_migration_v1_to_v2(hass: HomeAssistant):
     await hass.async_block_till_done()
 
     assert entry.state is ConfigEntryState.LOADED
-    assert entry.version == 2
+    assert entry.version == 3
     (subentry,) = entry.subentries.values()
     assert subentry.subentry_type == "tariff"
     assert subentry.unique_id == "main"
@@ -185,7 +189,7 @@ async def test_migration_without_plans(hass: HomeAssistant):
     assert await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
     assert entry.state is ConfigEntryState.LOADED
-    assert entry.version == 2
+    assert entry.version == 3
     assert not entry.subentries
     assert "applied" not in entry.options
     assert entry.runtime_data.schedule is None

@@ -162,7 +162,9 @@ def test_full_document_two_zone_day():
         "grouping": "day",
         "zones": [{"key": "t1", "name": "Day"}, {"key": "t2", "name": "Night"}],
         "plans": [plan_to_data(two_zone())],
-        "devices": [{"entity_id": P1, "name": "Plug 01", "statistics": "ok"}],
+        "devices": [
+            {"entity_id": P1, "name": "Plug 01", "statistics": "ok", "upstream": None}
+        ],
         "buckets": [bucket],
         "totals": bucket,
         "unpriced_hours": 0,
@@ -451,7 +453,12 @@ def test_nested_key_order():
         "hours",
         "kwh",
     ]
-    assert list(doc["devices"][0]) == ["entity_id", "name", "statistics"]
+    assert list(doc["devices"][0]) == [
+        "entity_id",
+        "name",
+        "statistics",
+        "upstream",
+    ]
     assert list(doc["zones"][0]) == ["key", "name"]
 
 
@@ -460,3 +467,11 @@ def test_issue_span_must_be_whole_hours():
     bad = replace(report.issues[0], end=report.issues[0].end + timedelta(minutes=30))
     with pytest.raises(ValueError, match="whole number of hours"):
         to_json(replace(report, issues=(bad,)), [DEV1])
+
+
+def test_device_upstream_field():
+    report, _ = one_hour_report(two_zone(), ONE)
+    doc = to_json(report, [DEV1])
+    assert doc["devices"][0]["upstream"] is None
+    nested = DeviceInfo(P1, "Plug 01", "ok", upstream=P2)
+    assert to_json(report, [nested])["devices"][0]["upstream"] == P2

@@ -33,6 +33,7 @@ from custom_components.energy_cost_stats.engine.tariff import TariffSchedule
 from custom_components.energy_cost_stats.recorder_adapter import (
     HourlySeries,
     StatisticsStatus,
+    async_energy_statistic_ids,
     async_read_hourly_changes,
     classify_metadata,
 )
@@ -452,6 +453,20 @@ async def test_window_independence_end_to_end(
             assert bucket.rows == bucket_at(full, bucket.start).rows
             common += 1
     assert common == 71
+
+
+async def test_energy_statistic_ids(
+    hass: HomeAssistant, seed_statistics: SeedStatistics
+) -> None:
+    sums = {W_START: 1.0, W_START + HOUR: 2.0}
+    await seed_statistics(PLUG_01, sums)
+    await seed_statistics("sensor.plug_wh", sums, unit="Wh")
+    await seed_statistics("sensor.power_01", sums, unit="W")
+    await seed_statistics("sensor.mean_only", sums, has_sum=False)
+    await seed_statistics("ext:meter", sums)
+    assert await async_energy_statistic_ids(hass) == frozenset(
+        {PLUG_01, "sensor.plug_wh"}
+    )
 
 
 def test_only_adapter_imports_recorder() -> None:
