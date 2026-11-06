@@ -230,6 +230,48 @@ describe("tariff comparison", () => {
     expect(card.shadowRoot!.querySelectorAll("table.compare tbody tr")).toHaveLength(3);
   });
 
+  it("re-requests after the config is edited, dropping the old result, error and request", async () => {
+    let call = 0;
+    let releaseFirst: () => void = () => {};
+    const hass = makeHass(
+      () =>
+        new Promise((resolve, reject) => {
+          call += 1;
+          if (call === 1) {
+            reject({ code: "invalid_scenario", message: "scenario 1: hours not covered: 7" });
+          } else if (call === 2) {
+            releaseFirst = () => resolve(comparison()); // in flight while the config changes again
+          } else {
+            const doc = comparison();
+            doc.scenarios[0]!.name = "Edited";
+            resolve(doc);
+          }
+        }),
+    );
+    const { card } = await mount({ compare: COMPARE }, hass);
+    expect(card.shadowRoot!.querySelector("details.comparison .error")).not.toBeNull();
+
+    // Fix the scenario (same period and sensors): the error goes, a new request is sent.
+    card.setConfig({ type: "custom:energy-cost-stats-card", compare: [COMPARE[0]!] });
+    await settle(card);
+    expect(compareCalls(hass)).toHaveLength(2);
+    expect(card.shadowRoot!.querySelector("details.comparison .error")).toBeNull();
+
+    // Edit again while request 2 is pending: its late answer must not be shown.
+    card.setConfig({
+      type: "custom:energy-cost-stats-card",
+      compare: [{ ...COMPARE[0]!, name: "Edited" }],
+    });
+    await settle(card);
+    releaseFirst();
+    await settle(card);
+    expect(compareCalls(hass)).toHaveLength(3);
+    const names = [...card.shadowRoot!.querySelectorAll("table.compare tbody th.name")].map(
+      (th) => th.textContent ?? "",
+    );
+    expect(names.some((n) => n.includes("Edited"))).toBe(true);
+  });
+
   it("uses the report request's end for the comparison", async () => {
     const { hass } = await mount({ compare: COMPARE });
     const reportCall = hass.calls.find((c) => c.type === "energy_cost_stats/report")!;

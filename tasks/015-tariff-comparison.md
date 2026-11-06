@@ -1,6 +1,7 @@
 # 015 — Tariff comparison scenarios
 
-Status: in-review (round 1: CHANGES_REQUESTED, 2 required — fixed; round 2 pending)
+Status: in-review (round 1: 2 required — fixed; round 2: 1 required — fixed after the review; review limit
+(2 rounds) reached, so the last fix is for the human to check)
 Roadmap: stage 4 (card) — author request 2026-11-06: "which tariff is cheaper for my actual usage — my current
 one, single-rate or three-zone?"
 Spec sections: SPEC §4 (JSON contract), §4.1 (card), §4.2 (new)
@@ -39,7 +40,7 @@ with the difference and the cheapest option marked.
 
 ## Acceptance criteria
 - [x] `script/test` → 535+ passed, engine coverage ≥ 95 % (scenario.py 100 %); `script/lint` clean; pyright 0.
-- [x] Card: vitest 99 passed; `tsc` clean; bundle rebuilt and `check-bundle` up to date.
+- [x] Card: vitest 100 passed; `tsc` clean; bundle rebuilt and `check-bundle` up to date.
 - [x] Dev HA with real statistics: comparison renders for a month and for today; numbers consistent
       (current tariff total equals the main table total).
 - [ ] CI green on the PR.
@@ -68,6 +69,10 @@ with the difference and the cheapest option marked.
   localized preset name; the comparison uses the report request's own `end`; zone kWh matched by key;
   `periods` must be a mapping when given (`""`/`[]` rejected); the card's `MAX_SCENARIOS` constant is checked
   against the engine's by a unit test; refresh re-requests the comparison.
+
+- Review round 2: (R1) a config edit (e.g. a scenario price) with the same period and sensors left the comparison
+  "Loading…" forever / kept an old error: the comparison key now includes the scenarios, and `setConfig` drops the
+  shown result, the error, the key and any request in flight (new test). SPEC §4.2 describes the card behaviour.
 
 ## Follow-ups
 - Decide where scenarios live (see open questions); maybe a `get_comparison` service.

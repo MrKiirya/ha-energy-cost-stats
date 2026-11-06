@@ -1,82 +1,68 @@
-# 015 — Review (round 1)
+# 015 — Review (round 2)
 
 Verdict: CHANGES_REQUESTED
 
-Scope reviewed: `git diff task/014-cost-card..HEAD` (commits 8b348f9, 1d346a4, 26343ad, 272de3c).
+Scope reviewed: `git diff task/014-cost-card..HEAD` (commits 8b348f9, 1d346a4, 26343ad, 272de3c, 99106ec);
+round-1 fixes in 99106ec (`git show HEAD`).
 
 ## Checks run
-- `sh script/test` (ecs-dev) → `536 passed in 95.63s`; engine coverage 100.00 % (`engine/scenario.py` 79 stmts, 28 branches, 100 %).
-- `sh script/lint` → `All checks passed!` / `87 files already formatted`.
+- `sh script/test` (ecs-dev, HEAD 99106ec) → `538 passed in 90.32s`; total coverage 100.00 %
+  (`engine/scenario.py` 81 stmts, 30 branches, 100 %).
+- `sh script/lint` → `All checks passed!` / `88 files already formatted`.
 - `uv run --group ha pyright` → `0 errors, 0 warnings, 0 informations`.
-- `npx vitest run` → `Tests 93 passed (93)`; `npx tsc --noEmit` → clean; `npm run check-bundle` → `Card bundle is up to date.`
+- `npx vitest run` → `Tests 99 passed (99)`; `npx tsc --noEmit` → clean; `npm run check-bundle` → `Card bundle is up to date.`
 - Hygiene: added lines contain only `sensor.plug_01` / `sensor.other`; none of the 36 entity ids in
   `tests/fixtures/private/ha_energy_statistics.csv` occurs in the diff (bundle included); no paths, hosts or secrets.
 - HA 2025.4.0 leg: not run locally (CI).
 
-## Acceptance criteria
-- [x] `script/test` 535+ passed, engine coverage ≥ 95 %, `scenario.py` 100 %, lint clean, pyright 0 — verified above (536).
-- [x] Card: vitest 93 passed, `tsc` clean, bundle up to date — verified above.
-- [ ] Dev HA with real statistics, current tariff total equals the main table total — not independently verified:
-  the dev HA answers on :8123 but needs an auth token, which the reviewer did not create. The backend side is
-  covered by `test_compare_prices_the_same_consumption` (actual == day report, 600.72). Note required item 2: in
-  the card the two totals can disagree after a quick period/grouping change, and suggestion 2 for open periods.
-- [ ] CI green on the PR — not yet (no PR / CI run to check).
+## Round-1 required items
+1. Incomplete current tariff used for "best" and differences — **resolved.** `card.ts:664-669` defines
+   `actualComplete` (cost not null, `unpriced_hours === 0`, plans present); the current row is excluded from the
+   minimum (`:686`) and from `best` (`:709-713`), differences are `—` when incomplete (`:714-717`), the warning
+   uses the same condition (`:743`). Test `does not compare against an incomplete current tariff` would fail
+   without the change (actual 10.00 would be cheapest and differences shown).
+2. Comparison sequencing / stale numbers — **resolved for period and grouping changes**: the comparison is now
+   keyed by `[period, entities]` (`card.ts:256-265`), the old result/error is cleared when the key changes, and the
+   grouping race is covered by `requests the new period's comparison even if the grouping changed meanwhile`
+   (exactly 2 compare calls, second for 2026-10-01..2026-11-01) and `clears the previous period's comparison until
+   the new one arrives`. However the new key introduced a regression for config edits — see required item 1 below.
 
-## What is right
-- `engine/scenario.py` is pure (imports only `engine.*` and stdlib), money is `Decimal` via `parse_price`
-  (comma accepted, negatives/garbage rejected by the existing regex, floats rejected with "decimal string"),
-  exact zone-set check, unknown keys/zones rejected, period overrides parsed with `parse_periods`, coverage
-  enforced by `TariffPlan` construction, blank name rejected. `valid_from` 1970-01-01 makes the one-plan schedule
-  cover any window.
-- `async_get_comparison` does one `_async_prepare` (one `async_read_hourly_changes`, same `QualitySettings`),
-  then `build_report` per schedule in one executor job on the same `series` — scenarios price exactly the hours
-  the report counts. `async_get_report` behaviour is unchanged by the refactor (existing tests pass).
-- Errors: `invalid_scenario` in `const.py`, `ERROR_MESSAGES`, `strings.json` and `translations/en.json` (identical
-  files; `test_all_error_codes_translated` extended); the message names the scenario index. Websocket schema
-  `scenarios: [dict]`, no `grouping` accepted (`invalid_format` tested), no admin requirement, same as `report`.
-- Card request: same `start`, same `requestEnd` rules with the integration's time zone, entities passed, YAML
-  numbers stringified (`String(7.5)` → `"7.5"`), comparison skipped without `compare`; tie → no badge;
-  percentage = rounded difference / current cost, no % when the base is 0.
-- SPEC §4.2 matches the implementation (request/response shape, zone keys, 1–5, `actual` may be partial/null,
-  websocket only, card behaviour).
+## Round-1 suggestions
+1. Localized default scenario name — applied in the card (`presetName`, test in Russian). SPEC §4.2 still does not
+   state the default name (see suggestion 2).
+2. Comparison uses the report request's `end` — applied (`card.ts:236, 265`, `report.ts:171`), tested.
+3. Zone kWh matched by key — applied (`card.ts:720`).
+4. `periods` must be a mapping when given — applied (`scenario.py:87-89`), `""` and `[]` tested.
+5. `MAX_SCENARIOS` constant in the card — applied, and a unit test checks it against the engine's value.
+6. `test_max_scenarios_is_small` — replaced by the cross-check test.
+
+## Acceptance criteria
+- [x] `script/test` 535+ passed, engine coverage ≥ 95 %, `scenario.py` 100 %, lint clean, pyright 0 — verified (538).
+- [x] Card: vitest 99 passed, `tsc` clean, bundle up to date — verified.
+- [ ] Dev HA with real statistics, current tariff total equals the main table total — not independently verified
+  (dev HA needs an auth token the reviewer did not create). Backend side covered by
+  `test_compare_prices_the_same_consumption`; with the shared `end` the card no longer straddles an hour.
+- [ ] CI green on the PR — not yet (no PR / CI run to check).
 
 ## Findings
 ### Required
-1. `frontend/src/card.ts:657-668, 681-684` — the "best" badge and the differences use the current tariff's cost
-   even when it is incomplete. Per SPEC §4 the actual `cost` is the sum over *priced* hours only (non-null as
-   soon as one hour is priced), while every scenario prices *all* counted hours. With `unpriced_hours > 0` the
-   current tariff is systematically understated, so it can get the "best" badge and every scenario shows as
-   "dearer" — a wrong recommendation, only softened by the warning at line 711. Fix direction: when
-   `comparison.actual.unpriced_hours > 0` (or `plans` is empty), leave the current row out of the minimum and
-   show no difference (`—`) for the scenarios (or compare only scenario vs. scenario); keep the warning. Add a
-   card test: actual partial and cheapest → no badge on the current row, differences hidden.
-2. `frontend/src/card.ts:213-217, 243-245` — comparison sequencing can lose the request for a new period and
-   leaves stale numbers on screen. (a) Change the period, and change the grouping before that report returns:
-   the period load (seq N, `withComparison=true`) is discarded by the seq guard, the grouping load (seq N+1)
-   runs with `withComparison=false`, so the comparison for the new period is never requested and the previous
-   period's comparison stays displayed under the new report indefinitely (until a refresh tick, which only
-   happens for open periods). (b) Even without the race, `_comparison` is not cleared when the period changes,
-   so the old period's comparison is shown next to the new report until the new response arrives. Fix
-   direction: decide on "needs comparison" by a key (period start/end + entities) of the last requested
-   comparison rather than by a boolean passed through `_load`, and clear `_comparison`/`_comparisonError` (or
-   show loading) when that key changes. Add a test: change period, then grouping before the report resolves →
-   exactly one new compare call for the new period and no old numbers rendered.
+1. `frontend/src/card.ts:152-160` (with `:256-265`) — editing the card config in the dashboard editor leaves the
+   comparison stuck. `setConfig` on an edit clears `_comparison` but not `_comparisonKey` (nor
+   `_comparisonError`). The period is then re-created from the configured preset; when it is the same period and
+   the same `entities` (the usual case: the user tunes a scenario price or adds a scenario), the key is unchanged,
+   `_load()` runs with `refresh = false`, so no compare request is sent and `_renderComparison` shows
+   "Loading…" indefinitely (closed periods have no refresh tick; only the refresh button recovers). If the previous
+   comparison failed with `invalid_scenario`, fixing the scenario keeps showing the old error the same way. Round 1
+   did not have this (a period change always re-requested). Fix direction: in `setConfig` on an edit reset
+   `_comparisonKey = undefined` and `_comparisonError = undefined` (and arguably include `compare` in the key, so
+   the key describes the request that produced the shown comparison). Add a card test: mount with `compare`, call
+   `setConfig` again with a changed price and the same period → a second compare call is sent and its rows render.
 
 ### Suggestions
-1. `custom_components/energy_cost_stats/engine/scenario.py:125` / card — an unnamed scenario is called by the
-   preset's English plan name ("Single-rate"), also in the Russian card. The response carries `preset`, so the
-   card could localize the default name when the config has no `name` (or the engine could return `name: null`).
-   SPEC §4.2 should state the default name either way.
-2. `frontend/src/report.ts:165` — the comparison computes its own `end` with a second `new Date()`; for an open
-   period (today) the report and the comparison can straddle an hour boundary and the "current tariff" total
-   then differs from the main table by the latest hour. Pass the report request's `end` (or `now`) into
-   `fetchComparison`.
-3. `frontend/src/card.ts:687` — zone kWh are matched to `doc.zones` by index; matching `total.zones` by `key`
-   would not depend on the serializer keeping both lists in the same order.
-4. `custom_components/energy_cost_stats/engine/scenario.py:87` — `data.get("periods") or {}` silently accepts
-   `""`, `[]`, `0` as "no overrides"; `if "periods" in data` plus a mapping check would reject them like other
-   wrong types.
-5. `frontend/src/card.ts:132` — the 1–5 limit is a literal; export a constant next to `SCENARIO_PRESETS`
-   (mirroring `MAX_SCENARIOS`) so the two cannot drift.
-6. `tests/unit/test_scenario.py::test_max_scenarios_is_small` asserts little; the real limit is already covered
-   by the integration test with 6 scenarios — consider dropping it.
+1. `frontend/src/card.ts:152-160` — while fixing the above: an in-flight comparison from the old config can still
+   land after the edit (its `_comparisonSeq` is still current); the key reset plus the new request bumps the
+   sequence and discards it — worth asserting in the same test.
+2. `docs/SPEC.md` §4.2 "Card" — document the round-1 behaviour: when the current tariff is incomplete (unpriced
+   hours or no plan) it gets no "best" badge and scenarios show no difference, with a warning; an unnamed scenario
+   is shown by its localized preset name (the response `name` is the English plan name). Also "re-requested when
+   the period changes" now reads "when the period or sensors change, or on refresh".

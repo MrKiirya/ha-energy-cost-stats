@@ -231,10 +231,13 @@ plans ("scenarios").
   (`cost` may be partial or `null` where no plan covers the window); a scenario prices every counted hour.
   Websocket only (read-only, no admin); no service yet.
 - **Card:** a "Tariff comparison" section when `compare` is configured (YAML numbers in `prices` are sent as
-  strings). Rows: current tariff (plan names) and each scenario with kWh per zone (zones without hours are
-  hidden; preset zones get localized names by key), cost, average price and the difference to the current
-  tariff (amount and %); the cheapest gets a "best" badge only when it is unique. Re-requested when the period
-  changes, not when only the grouping changes.
+  strings). Rows: current tariff (plan names) and each scenario (its `name`, else the localized preset name) with
+  kWh per zone (zones without hours are hidden; preset zones get localized names by key), cost, average price and
+  the difference to the current tariff (amount and %); the cheapest gets a "best" badge only when it is unique.
+  When the current tariff is incomplete (unpriced hours, no plan or `null` cost) it takes no part in "best" and no
+  differences are shown, with a note. The request uses the report request's own `end`; it is sent after the
+  report arrived when the period, the sensors or the scenarios changed (not for a grouping change), and on
+  refresh / auto-refresh; a config edit drops the shown result, its error and any request in flight.
 
 ## 5. Known pitfalls to handle
 - Engine input is hourly deltas keyed by **UTC hour start**; zones, plan switches and groupings use local
