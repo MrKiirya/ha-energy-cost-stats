@@ -187,7 +187,10 @@ the repo as is, with no build step) and CI fails when it does not match the sour
   dashboard resource has to be added. Extra modules are imported before the frontend boots, and recent frontends
   replace `window.customElements` with a scoped-registry polyfill while booting; the bundle therefore waits for
   the `<home-assistant>` element to be defined before it defines the card (else dashboards show "Configuration
-  error"). Loaded later (e.g. as a dashboard resource) it defines the card at once.
+  error"). Loaded later (e.g. as a dashboard resource) it defines the card at once; if the frontend has not booted
+  after 30 s it defines the card anyway and logs a warning. The static path is served with long cache headers:
+  a manually added dashboard resource must carry a version query (`?v=...`) to pick up updates; the automatic
+  extra module does this by itself.
 - **Config.** `title`, `entities` (subset of the configured sensors; default all), `period` (initial preset,
   default `this_month`), `grouping` (`auto` / `hour` / `day` / `week` / `month` for the "by period" table,
   default `auto`), `show_breakdown` (bool). No visual editor yet.
@@ -198,10 +201,12 @@ the repo as is, with no build step) and CI fails when it does not match the sour
   week 7). Weeks start on Monday (like the engine). "Now" moves to the same kind of period that contains today;
   "next" is disabled when the next period would start after today.
 - **Request.** `start` = first date; `end` = the day after the last date, except for a period that contains today:
-  then the start of the current local hour (a datetime without offset), so hours that have not happened yet are
-  not shown as missing. "Today" and the current hour use the report's `time_zone` once a report arrived, else
-  HA's time zone. Auto grouping: ≤ 2 days hour, ≤ 45 days day, ≤ 120 days week, else month; hour is offered only
-  up to 31 days. While the period contains today the card re-fetches every 10 minutes; stale responses are dropped.
+  then the start of the current local hour as an ISO datetime with the zone's UTC offset (unambiguous in a DST
+  fall-back hour; zones with non-whole-hour offsets use the date), so hours that have not happened yet are not
+  shown as missing. "Today" and the current hour use the integration's time zone (the report's `time_zone`) once
+  known, else HA's; if the first report reveals a different zone for a running period, the card asks again. Auto grouping: ≤ 2 days hour, ≤ 45 days day, ≤ 120 days week, else month; hour is offered only
+  up to 31 days. While the last request was cut at the current hour the card re-fetches every 10 minutes (so also once after
+  the period has ended, to pick up its last hour); stale responses are dropped.
 - **Table.** One row per device with kWh and cost per zone (zone header shows the period price when it is a single
   price), total kWh, total cost and the average price (`cost / kWh`, display only), plus the total row. `null`
   shows as "—", never 0. Rows that are not `complete` get a badge (≈ estimated, ! partial/missing) with the
