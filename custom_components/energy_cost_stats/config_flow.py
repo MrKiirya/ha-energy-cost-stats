@@ -2,15 +2,14 @@
 
 import zoneinfo
 from collections.abc import Mapping
+from dataclasses import replace
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import voluptuous as vol
 from homeassistant.config_entries import (
-    ConfigEntry,
     ConfigFlow,
     ConfigFlowResult,
-    ConfigSubentryFlow,
     OptionsFlow,
 )
 from homeassistant.core import HomeAssistant, callback
@@ -38,7 +37,6 @@ from .const import (
     DEFAULT_SPIKE_LIMIT,
     DEFAULT_TITLE,
     DOMAIN,
-    SUBENTRY_TYPE_TARIFF_PLAN,
 )
 from .settings import (
     IntegrationSettings,
@@ -46,7 +44,6 @@ from .settings import (
     settings_from_options,
     settings_to_options,
 )
-from .subentry_flow import TariffPlanSubentryFlow
 
 _ENERGY = "energy"
 
@@ -120,7 +117,7 @@ def _timezone_selector(names: list[str]) -> SelectSelector:
 class EnergyCostStatsConfigFlow(ConfigFlow, domain=DOMAIN):
     """Initial setup: time zone and global spike limit."""
 
-    VERSION = 1
+    VERSION = 2
     MINOR_VERSION = 1
 
     @staticmethod
@@ -130,14 +127,6 @@ class EnergyCostStatsConfigFlow(ConfigFlow, domain=DOMAIN):
     ) -> "EnergyCostStatsOptionsFlow":
         """Return the options flow (constructed without the config entry)."""
         return EnergyCostStatsOptionsFlow()
-
-    @classmethod
-    @callback
-    def async_get_supported_subentry_types(
-        cls, config_entry: ConfigEntry
-    ) -> dict[str, type[ConfigSubentryFlow]]:
-        """Tariff plans are config subentries."""
-        return {SUBENTRY_TYPE_TARIFF_PLAN: TariffPlanSubentryFlow}
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -227,7 +216,8 @@ class EnergyCostStatsOptionsFlow(OptionsFlow):
                     for key, value in current.device_spike_limits.items()
                     if key in entities
                 }
-                self._settings = IntegrationSettings(
+                self._settings = replace(
+                    current,
                     time_zone=user_input[CONF_TIME_ZONE],
                     spike_limit=limit,
                     device_spike_limits=kept,
@@ -290,12 +280,7 @@ class EnergyCostStatsOptionsFlow(OptionsFlow):
                 limits[entity_id] = None if value == 0 else value
             if errors:
                 return self._show_device_limits(settings, user_input, errors)
-            final = IntegrationSettings(
-                time_zone=settings.time_zone,
-                spike_limit=settings.spike_limit,
-                device_spike_limits=limits,
-                entities=settings.entities,
-            )
+            final = replace(settings, device_spike_limits=limits)
             return self.async_create_entry(data=settings_to_options(final))
 
         return self._show_device_limits(settings, None, {})

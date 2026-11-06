@@ -1,4 +1,6 @@
-"""Websocket command ``energy_cost_stats/report`` (tasks/013, docs/SPEC.md §2).
+"""Websocket commands ``energy_cost_stats/report`` and ``.../compare``.
+
+Tasks 013 and 017, docs/SPEC.md §2 and §4.2.
 
 Read-only, so any authenticated user may call it (no admin requirement).
 """
@@ -17,9 +19,17 @@ from homeassistant.components.websocket_api.decorators import (
 )
 from homeassistant.core import HomeAssistant
 
-from .const import ATTR_END, ATTR_ENTITIES, ATTR_GROUPING, ATTR_START, WS_TYPE_REPORT
+from .const import (
+    ATTR_END,
+    ATTR_ENTITIES,
+    ATTR_GROUPING,
+    ATTR_START,
+    ATTR_TARIFFS,
+    WS_TYPE_COMPARE,
+    WS_TYPE_REPORT,
+)
 from .engine.models import Grouping
-from .report_api import ReportError, async_get_report
+from .report_api import ReportError, async_get_comparison, async_get_report
 
 
 @websocket_command(
@@ -52,6 +62,37 @@ async def ws_report(
     connection.send_result(msg["id"], result)
 
 
+@websocket_command(
+    {
+        vol.Required("type"): WS_TYPE_COMPARE,
+        vol.Required(ATTR_START): str,
+        vol.Required(ATTR_END): str,
+        vol.Optional(ATTR_ENTITIES): [cv.entity_id],
+        vol.Optional(ATTR_TARIFFS): [str],
+    }
+)
+@async_response
+async def ws_compare(
+    hass: HomeAssistant,
+    connection: ActiveConnection,
+    msg: dict[str, Any],
+) -> None:
+    """Return the actual report and the same consumption priced with other tariffs."""
+    try:
+        result = await async_get_comparison(
+            hass,
+            start=msg[ATTR_START],
+            end=msg[ATTR_END],
+            entities=msg.get(ATTR_ENTITIES),
+            tariffs=msg.get(ATTR_TARIFFS),
+        )
+    except ReportError as err:
+        connection.send_error(msg["id"], err.code, err.message)
+        return
+    connection.send_result(msg["id"], result)
+
+
 def async_register_websocket(hass: HomeAssistant) -> None:
-    """Register the command (once, from ``async_setup``)."""
+    """Register the commands (once, from ``async_setup``)."""
     async_register_command(hass, ws_report)
+    async_register_command(hass, ws_compare)

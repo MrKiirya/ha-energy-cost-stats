@@ -7,8 +7,11 @@ reports), ``t1`` = day/peak, ``t2`` = night, ``t3`` = semi-peak.
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal
+from types import MappingProxyType
 
 from .tariff import Period, TariffPlan, Zone
 
@@ -77,3 +80,28 @@ def ru_three_zone(
             ),
         ),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class PresetZone:
+    """One zone of a preset: stable key, default display name and default hours."""
+
+    key: str
+    name: str
+    periods: tuple[Period, ...]
+
+
+PRESET_ZONES: Mapping[str, tuple[PresetZone, ...]] = MappingProxyType(
+    {
+        "single_rate": (PresetZone("t0", "Single-rate", (Period(0, 24),)),),
+        "ru_two_zone": (
+            PresetZone("t1", "Day", (Period(7, 23),)),
+            PresetZone("t2", "Night", (Period(23, 7),)),
+        ),
+        "ru_three_zone": (
+            PresetZone("t1", "Peak", (Period(7, 10), Period(17, 21))),
+            PresetZone("t2", "Night", (Period(23, 7),)),
+            PresetZone("t3", "Semi-peak", (Period(10, 17), Period(21, 23))),
+        ),
+    }
+)

@@ -13,6 +13,8 @@ from types import MappingProxyType
 from typing import Any
 
 from .const import (
+    CONF_APPLIED,
+    CONF_COMPARE,
     CONF_DEVICE_SPIKE_LIMITS,
     CONF_ENTITIES,
     CONF_SPIKE_LIMIT,
@@ -20,7 +22,14 @@ from .const import (
 )
 
 _KNOWN_KEYS = frozenset(
-    {CONF_TIME_ZONE, CONF_SPIKE_LIMIT, CONF_DEVICE_SPIKE_LIMITS, CONF_ENTITIES}
+    {
+        CONF_TIME_ZONE,
+        CONF_SPIKE_LIMIT,
+        CONF_DEVICE_SPIKE_LIMITS,
+        CONF_ENTITIES,
+        CONF_APPLIED,
+        CONF_COMPARE,
+    }
 )
 
 
@@ -36,6 +45,10 @@ class IntegrationSettings:
     spike_limit: Decimal | None
     device_spike_limits: Mapping[str, Decimal | None]
     entities: tuple[str, ...]
+    # Applied tariff history as (ISO date, tariff id); validated with the tariffs.
+    applied: tuple[tuple[str, str], ...] = ()
+    # Explicit compare list (tariff ids); ``None`` = every tariff never applied.
+    compare: tuple[str, ...] | None = None
 
     def __post_init__(self) -> None:
         """Make the override mapping read-only."""
@@ -96,17 +109,43 @@ def settings_from_options(options: Mapping[str, Any]) -> IntegrationSettings:
     if len(set(raw_entities)) != len(raw_entities):
         raise SettingsError("entities must not contain duplicates")
 
+    raw_applied = options.get(CONF_APPLIED, [])
+    if not isinstance(raw_applied, list):
+        raise SettingsError("applied must be a list")
+    applied: list[tuple[str, str]] = []
+    for item in raw_applied:  # pyright: ignore[reportUnknownVariableType]
+        if (
+            not isinstance(item, Mapping)
+            or set(item) != {"from", "tariff"}  # pyright: ignore[reportUnknownArgumentType]
+            or not isinstance(item["from"], str)
+            or not isinstance(item["tariff"], str)
+        ):
+            raise SettingsError("applied items must be {from, tariff} strings")
+        applied.append((item["from"], item["tariff"]))
+
+    raw_compare = options.get(CONF_COMPARE)
+    compare: tuple[str, ...] | None = None
+    if raw_compare is not None:
+        if not isinstance(raw_compare, list) or not all(
+            isinstance(c, str)
+            for c in raw_compare  # pyright: ignore[reportUnknownVariableType]
+        ):
+            raise SettingsError("compare must be a list of tariff ids")
+        compare = tuple(raw_compare)  # pyright: ignore[reportUnknownArgumentType]
+
     return IntegrationSettings(
         time_zone=time_zone,
         spike_limit=spike_limit,
         device_spike_limits=overrides,
         entities=tuple(raw_entities),
+        applied=tuple(applied),
+        compare=compare,
     )
 
 
 def settings_to_options(settings: IntegrationSettings) -> dict[str, Any]:
     """Serialize settings to the JSON-friendly ``entry.options`` format."""
-    return {
+    options: dict[str, Any] = {
         CONF_TIME_ZONE: settings.time_zone,
         CONF_SPIKE_LIMIT: (
             None
@@ -119,3 +158,10 @@ def settings_to_options(settings: IntegrationSettings) -> dict[str, Any]:
         },
         CONF_ENTITIES: list(settings.entities),
     }
+    if settings.applied:
+        options[CONF_APPLIED] = [
+            {"from": start, "tariff": tariff} for start, tariff in settings.applied
+        ]
+    if settings.compare is not None:
+        options[CONF_COMPARE] = list(settings.compare)
+    return options
