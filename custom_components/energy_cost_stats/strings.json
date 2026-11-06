@@ -192,6 +192,9 @@
     },
     "unknown_entity": {
       "message": "{entity_id} is not one of the configured energy sensors."
+    },
+    "invalid_scenario": {
+      "message": "Invalid tariff scenario: {detail}"
     }
   }
 }

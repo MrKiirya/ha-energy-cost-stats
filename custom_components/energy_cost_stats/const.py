@@ -42,16 +42,19 @@ def zone_field(key: str, suffix: str) -> str:
 # Report API (docs/SPEC.md §2): websocket command, service, request fields, errors.
 SERVICE_GET_REPORT: Final = "get_report"
 WS_TYPE_REPORT: Final = "energy_cost_stats/report"
+WS_TYPE_COMPARE: Final = "energy_cost_stats/compare"
 
 ATTR_START: Final = "start"
 ATTR_END: Final = "end"
 ATTR_GROUPING: Final = "grouping"
 ATTR_ENTITIES: Final = "entities"
+ATTR_SCENARIOS: Final = "scenarios"
 
 ERR_NOT_LOADED: Final = "not_loaded"
 ERR_INVALID_PERIOD: Final = "invalid_period"
 ERR_PERIOD_TOO_LONG: Final = "period_too_long"
 ERR_UNKNOWN_ENTITY: Final = "unknown_entity"
+ERR_INVALID_SCENARIO: Final = "invalid_scenario"
 
 # Hourly reports are limited to 31 days plus the closing hour (745 buckets).
 MAX_HOURLY_DAYS: Final = 31

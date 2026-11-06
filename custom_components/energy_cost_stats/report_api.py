@@ -8,9 +8,9 @@ Design: tasks/013-report-websocket-and-service.md.
 from __future__ import annotations
 
 import re
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta, tzinfo
-from functools import partial
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -22,16 +22,19 @@ from homeassistant.util import dt as dt_util
 from .const import (
     DOMAIN,
     ERR_INVALID_PERIOD,
+    ERR_INVALID_SCENARIO,
     ERR_NOT_LOADED,
     ERR_PERIOD_TOO_LONG,
     ERR_UNKNOWN_ENTITY,
     MAX_HOURLY_DAYS,
     MAX_PERIOD_DAYS,
 )
-from .engine.models import Grouping, ReportRequest
+from .engine.models import DeviceSeries, Grouping, ReportRequest
 from .engine.quality import QualitySettings
 from .engine.report import build_report
+from .engine.scenario import MAX_SCENARIOS, Scenario, scenario_from_data
 from .engine.serialize import DeviceInfo, report_to_json
+from .engine.tariff import TariffSchedule, TariffValidationError
 from .recorder_adapter import HourlySeries, async_read_hourly_changes
 
 _HOUR = timedelta(hours=1)
@@ -44,6 +47,7 @@ ERROR_MESSAGES = {
     ERR_INVALID_PERIOD: "Invalid period: {detail}",
     ERR_PERIOD_TOO_LONG: "The period is too long (at most {max})",
     ERR_UNKNOWN_ENTITY: "{entity_id} is not one of the configured energy sensors",
+    ERR_INVALID_SCENARIO: "Invalid tariff scenario: {detail}",
 }
 
 
@@ -134,15 +138,27 @@ def _display_name(hass: HomeAssistant, series: HourlySeries) -> str:
     return series.name or entity_id
 
 
-async def async_get_report(
+@dataclass(frozen=True, slots=True)
+class _Prepared:
+    """A validated request with the statistics read for it."""
+
+    request: ReportRequest
+    series: list[DeviceSeries]
+    devices: list[DeviceInfo]
+    quality: QualitySettings
+    time_zone: str
+    schedule: TariffSchedule | None
+
+
+async def _async_prepare(
     hass: HomeAssistant,
     *,
     start: str,
     end: str,
     grouping: str,
     entities: Sequence[str] | None,
-) -> dict[str, Any]:
-    """Build the report document. Raises ``ReportError`` for user mistakes."""
+) -> _Prepared:
+    """Validate the request and read the statistics. Raises ``ReportError``."""
     entry = _loaded_entry(hass)
     runtime = entry.runtime_data
     settings = runtime.settings
@@ -168,23 +184,100 @@ async def async_get_report(
     ids = _select_entities(settings.entities, entities)
     request = ReportRequest(start_utc, end_utc, tz, grouping)
     read = await async_read_hourly_changes(hass, ids, start_utc, end_utc)
-    quality = QualitySettings(
-        spike_limit=settings.spike_limit,
-        device_spike_limits=settings.device_spike_limits,
+    return _Prepared(
+        request=request,
+        series=[item.series for item in read],
+        devices=[
+            DeviceInfo(item.statistic_id, _display_name(hass, item), item.status.value)
+            for item in read
+        ],
+        quality=QualitySettings(
+            spike_limit=settings.spike_limit,
+            device_spike_limits=settings.device_spike_limits,
+        ),
+        time_zone=time_zone,
+        schedule=runtime.schedule,
     )
-    report = await hass.async_add_executor_job(
-        partial(
-            build_report,
-            request,
-            runtime.schedule,
-            [item.series for item in read],
-            quality=quality,
-        )
+
+
+def _document(
+    hass: HomeAssistant, prepared: _Prepared, schedule: TariffSchedule | None
+) -> dict[str, Any]:
+    """Build and serialize one report (runs in the executor)."""
+    report = build_report(
+        prepared.request, schedule, prepared.series, quality=prepared.quality
     )
-    devices = [
-        DeviceInfo(item.statistic_id, _display_name(hass, item), item.status.value)
-        for item in read
-    ]
     return report_to_json(
-        report, devices=devices, time_zone=time_zone, currency=hass.config.currency
+        report,
+        devices=prepared.devices,
+        time_zone=prepared.time_zone,
+        currency=hass.config.currency,
     )
+
+
+async def async_get_report(
+    hass: HomeAssistant,
+    *,
+    start: str,
+    end: str,
+    grouping: str,
+    entities: Sequence[str] | None,
+) -> dict[str, Any]:
+    """Build the report document. Raises ``ReportError`` for user mistakes."""
+    prepared = await _async_prepare(
+        hass, start=start, end=end, grouping=grouping, entities=entities
+    )
+    return await hass.async_add_executor_job(
+        _document, hass, prepared, prepared.schedule
+    )
+
+
+def parse_scenarios(data: Sequence[Mapping[str, Any]]) -> list[Scenario]:
+    """Parse the request's scenarios. Raises ``ReportError(invalid_scenario)``."""
+    if not 1 <= len(data) <= MAX_SCENARIOS:
+        raise ReportError(
+            ERR_INVALID_SCENARIO,
+            detail=f"between 1 and {MAX_SCENARIOS} scenarios are allowed",
+        )
+    scenarios: list[Scenario] = []
+    for index, item in enumerate(data, start=1):
+        try:
+            scenarios.append(scenario_from_data(item))
+        except TariffValidationError as err:
+            raise ReportError(
+                ERR_INVALID_SCENARIO, detail=f"scenario {index}: {err}"
+            ) from err
+    return scenarios
+
+
+async def async_get_comparison(
+    hass: HomeAssistant,
+    *,
+    start: str,
+    end: str,
+    entities: Sequence[str] | None,
+    scenarios: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    """Price the same consumption with the configured plans and each scenario.
+
+    Statistics are read once; every document uses grouping ``total`` (SPEC §4.2).
+    """
+    parsed = parse_scenarios(scenarios)
+    prepared = await _async_prepare(
+        hass, start=start, end=end, grouping=Grouping.TOTAL.value, entities=entities
+    )
+
+    def build() -> dict[str, Any]:
+        return {
+            "actual": _document(hass, prepared, prepared.schedule),
+            "scenarios": [
+                {
+                    "name": scenario.name,
+                    "preset": scenario.preset,
+                    "report": _document(hass, prepared, scenario.schedule),
+                }
+                for scenario in parsed
+            ],
+        }
+
+    return await hass.async_add_executor_job(build)
