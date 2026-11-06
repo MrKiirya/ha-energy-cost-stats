@@ -56,7 +56,376 @@
       "invalid_options": "The stored options are invalid. Remove and add the integration again."
     }
   },
+  "config_subentries": {
+    "tariff": {
+      "entry_type": "Tariff",
+      "initiate_flow": {
+        "user": "Add tariff",
+        "reconfigure": "Edit tariff"
+      },
+      "step": {
+        "user": {
+          "title": "Add tariff",
+          "description": "Give the tariff a name and choose what to start from. Prices and hours are entered in the following steps.",
+          "data": {
+            "name": "Name",
+            "base": "Start from"
+          },
+          "data_description": {
+            "name": "Shown in reports and on the integration page.",
+            "base": "A ready-made zone layout, your own zones, or a copy of the latest version of an existing tariff."
+          }
+        },
+        "copy": {
+          "title": "Copy a tariff",
+          "description": "The latest version of the chosen tariff is the starting point of the new one.",
+          "data": {
+            "source": "Tariff to copy"
+          }
+        },
+        "custom_zones": {
+          "title": "Number of zones",
+          "description": "How many tariff zones the tariff has (1 to 6).",
+          "data": {
+            "count": "Zones"
+          }
+        },
+        "tariff_id": {
+          "title": "Tariff id",
+          "description": "The id identifies the tariff in configuration and API calls and cannot be confused with its name. Use a-z, 0-9 and _ (1 to 32 characters).",
+          "data": {
+            "id": "Id"
+          }
+        },
+        "first_version": {
+          "title": "First version",
+          "description": "Enter the start date and the zones. {zones}",
+          "data": {
+            "valid_from": "Valid from"
+          },
+          "data_description": {
+            "valid_from": "The first version applies from local midnight of this date."
+          },
+          "sections": {
+            "zone_1": {
+              "name": "Zone 1",
+              "data": {
+                "key": "Key",
+                "name": "Name",
+                "price": "Price per kWh",
+                "hours": "Hours"
+              },
+              "data_description": {
+                "key": "Stable zone key (a-z, 0-9, _). It is kept in the reports and cannot be changed later.",
+                "name": "Display name of the zone.",
+                "price": "Price per kWh, for example 10.30. A comma is accepted as the decimal separator.",
+                "hours": "Whole hours as HH:MM-HH:MM, separate several periods with commas, for example 07:00-10:00, 17:00-21:00. 24:00 is the end of the day."
+              }
+            },
+            "zone_2": {
+              "name": "Zone 2",
+              "data": {
+                "key": "Key",
+                "name": "Name",
+                "price": "Price per kWh",
+                "hours": "Hours"
+              },
+              "data_description": {
+                "key": "Stable zone key (a-z, 0-9, _). It is kept in the reports and cannot be changed later.",
+                "name": "Display name of the zone.",
+                "price": "Price per kWh, for example 10.30. A comma is accepted as the decimal separator.",
+                "hours": "Whole hours as HH:MM-HH:MM, separate several periods with commas, for example 07:00-10:00, 17:00-21:00. 24:00 is the end of the day."
+              }
+            },
+            "zone_3": {
+              "name": "Zone 3",
+              "data": {
+                "key": "Key",
+                "name": "Name",
+                "price": "Price per kWh",
+                "hours": "Hours"
+              },
+              "data_description": {
+                "key": "Stable zone key (a-z, 0-9, _). It is kept in the reports and cannot be changed later.",
+                "name": "Display name of the zone.",
+                "price": "Price per kWh, for example 10.30. A comma is accepted as the decimal separator.",
+                "hours": "Whole hours as HH:MM-HH:MM, separate several periods with commas, for example 07:00-10:00, 17:00-21:00. 24:00 is the end of the day."
+              }
+            },
+            "zone_4": {
+              "name": "Zone 4",
+              "data": {
+                "key": "Key",
+                "name": "Name",
+                "price": "Price per kWh",
+                "hours": "Hours"
+              },
+              "data_description": {
+                "key": "Stable zone key (a-z, 0-9, _). It is kept in the reports and cannot be changed later.",
+                "name": "Display name of the zone.",
+                "price": "Price per kWh, for example 10.30. A comma is accepted as the decimal separator.",
+                "hours": "Whole hours as HH:MM-HH:MM, separate several periods with commas, for example 07:00-10:00, 17:00-21:00. 24:00 is the end of the day."
+              }
+            },
+            "zone_5": {
+              "name": "Zone 5",
+              "data": {
+                "key": "Key",
+                "name": "Name",
+                "price": "Price per kWh",
+                "hours": "Hours"
+              },
+              "data_description": {
+                "key": "Stable zone key (a-z, 0-9, _). It is kept in the reports and cannot be changed later.",
+                "name": "Display name of the zone.",
+                "price": "Price per kWh, for example 10.30. A comma is accepted as the decimal separator.",
+                "hours": "Whole hours as HH:MM-HH:MM, separate several periods with commas, for example 07:00-10:00, 17:00-21:00. 24:00 is the end of the day."
+              }
+            },
+            "zone_6": {
+              "name": "Zone 6",
+              "data": {
+                "key": "Key",
+                "name": "Name",
+                "price": "Price per kWh",
+                "hours": "Hours"
+              },
+              "data_description": {
+                "key": "Stable zone key (a-z, 0-9, _). It is kept in the reports and cannot be changed later.",
+                "name": "Display name of the zone.",
+                "price": "Price per kWh, for example 10.30. A comma is accepted as the decimal separator.",
+                "hours": "Whole hours as HH:MM-HH:MM, separate several periods with commas, for example 07:00-10:00, 17:00-21:00. 24:00 is the end of the day."
+              }
+            }
+          }
+        },
+        "reconfigure": {
+          "title": "Tariff {name}",
+          "description": "**{name}** (`{id}`). {applied}.\n\n{versions}\n\nWhat do you want to do?",
+          "menu_options": {
+            "new_version": "Add a new version",
+            "select_version": "Edit or delete a version",
+            "rename": "Rename the tariff"
+          }
+        },
+        "new_version": {
+          "title": "New version of {name}",
+          "description": "A new version starts a new price period. The zones are taken over from the version before.",
+          "data": {
+            "valid_from": "Valid from",
+            "price_1": "Price of zone 1",
+            "price_2": "Price of zone 2",
+            "price_3": "Price of zone 3",
+            "price_4": "Price of zone 4",
+            "price_5": "Price of zone 5",
+            "price_6": "Price of zone 6"
+          },
+          "data_description": {
+            "valid_from": "The version applies from local midnight of this date until the next version.",
+            "price_1": "Price per kWh of {zone_1}.",
+            "price_2": "Price per kWh of {zone_2}.",
+            "price_3": "Price per kWh of {zone_3}.",
+            "price_4": "Price per kWh of {zone_4}.",
+            "price_5": "Price per kWh of {zone_5}.",
+            "price_6": "Price per kWh of {zone_6}."
+          },
+          "sections": {
+            "hours": {
+              "name": "Hours",
+              "description": "Change the hours only if they differ from the version before. Whole hours as HH:MM-HH:MM.",
+              "data": {
+                "hours_1": "Hours of zone 1",
+                "hours_2": "Hours of zone 2",
+                "hours_3": "Hours of zone 3",
+                "hours_4": "Hours of zone 4",
+                "hours_5": "Hours of zone 5",
+                "hours_6": "Hours of zone 6"
+              }
+            }
+          }
+        },
+        "select_version": {
+          "title": "Choose a version",
+          "description": "{versions}",
+          "data": {
+            "version": "Version"
+          }
+        },
+        "edit_first_version": {
+          "title": "Edit the first version of {name}",
+          "description": "Zone keys cannot be changed. {zones}",
+          "data": {
+            "valid_from": "Valid from",
+            "delete": "Delete this version"
+          },
+          "data_description": {
+            "valid_from": "The first version applies from local midnight of this date.",
+            "delete": "Remove the version instead of saving the changes. The next version becomes the first one. The other fields are ignored."
+          },
+          "sections": {
+            "zone_1": {
+              "name": "Zone 1",
+              "data": {
+                "name": "Name",
+                "price": "Price per kWh",
+                "hours": "Hours"
+              },
+              "data_description": {
+                "name": "Display name of the zone.",
+                "price": "Price per kWh, for example 10.30. A comma is accepted as the decimal separator.",
+                "hours": "Whole hours as HH:MM-HH:MM, separate several periods with commas, for example 07:00-10:00, 17:00-21:00. 24:00 is the end of the day."
+              }
+            },
+            "zone_2": {
+              "name": "Zone 2",
+              "data": {
+                "name": "Name",
+                "price": "Price per kWh",
+                "hours": "Hours"
+              },
+              "data_description": {
+                "name": "Display name of the zone.",
+                "price": "Price per kWh, for example 10.30. A comma is accepted as the decimal separator.",
+                "hours": "Whole hours as HH:MM-HH:MM, separate several periods with commas, for example 07:00-10:00, 17:00-21:00. 24:00 is the end of the day."
+              }
+            },
+            "zone_3": {
+              "name": "Zone 3",
+              "data": {
+                "name": "Name",
+                "price": "Price per kWh",
+                "hours": "Hours"
+              },
+              "data_description": {
+                "name": "Display name of the zone.",
+                "price": "Price per kWh, for example 10.30. A comma is accepted as the decimal separator.",
+                "hours": "Whole hours as HH:MM-HH:MM, separate several periods with commas, for example 07:00-10:00, 17:00-21:00. 24:00 is the end of the day."
+              }
+            },
+            "zone_4": {
+              "name": "Zone 4",
+              "data": {
+                "name": "Name",
+                "price": "Price per kWh",
+                "hours": "Hours"
+              },
+              "data_description": {
+                "name": "Display name of the zone.",
+                "price": "Price per kWh, for example 10.30. A comma is accepted as the decimal separator.",
+                "hours": "Whole hours as HH:MM-HH:MM, separate several periods with commas, for example 07:00-10:00, 17:00-21:00. 24:00 is the end of the day."
+              }
+            },
+            "zone_5": {
+              "name": "Zone 5",
+              "data": {
+                "name": "Name",
+                "price": "Price per kWh",
+                "hours": "Hours"
+              },
+              "data_description": {
+                "name": "Display name of the zone.",
+                "price": "Price per kWh, for example 10.30. A comma is accepted as the decimal separator.",
+                "hours": "Whole hours as HH:MM-HH:MM, separate several periods with commas, for example 07:00-10:00, 17:00-21:00. 24:00 is the end of the day."
+              }
+            },
+            "zone_6": {
+              "name": "Zone 6",
+              "data": {
+                "name": "Name",
+                "price": "Price per kWh",
+                "hours": "Hours"
+              },
+              "data_description": {
+                "name": "Display name of the zone.",
+                "price": "Price per kWh, for example 10.30. A comma is accepted as the decimal separator.",
+                "hours": "Whole hours as HH:MM-HH:MM, separate several periods with commas, for example 07:00-10:00, 17:00-21:00. 24:00 is the end of the day."
+              }
+            }
+          }
+        },
+        "edit_version": {
+          "title": "Edit a version of {name}",
+          "description": "Past hours are re-priced after saving.",
+          "data": {
+            "valid_from": "Valid from",
+            "price_1": "Price of zone 1",
+            "price_2": "Price of zone 2",
+            "price_3": "Price of zone 3",
+            "price_4": "Price of zone 4",
+            "price_5": "Price of zone 5",
+            "price_6": "Price of zone 6",
+            "delete": "Delete this version"
+          },
+          "data_description": {
+            "valid_from": "The version applies from local midnight of this date until the next version.",
+            "price_1": "Price per kWh of {zone_1}.",
+            "price_2": "Price per kWh of {zone_2}.",
+            "price_3": "Price per kWh of {zone_3}.",
+            "price_4": "Price per kWh of {zone_4}.",
+            "price_5": "Price per kWh of {zone_5}.",
+            "price_6": "Price per kWh of {zone_6}.",
+            "delete": "Remove the version instead of saving the changes. The other fields are ignored."
+          },
+          "sections": {
+            "hours": {
+              "name": "Hours",
+              "description": "Change the hours only if they differ from the version before. Whole hours as HH:MM-HH:MM.",
+              "data": {
+                "hours_1": "Hours of zone 1",
+                "hours_2": "Hours of zone 2",
+                "hours_3": "Hours of zone 3",
+                "hours_4": "Hours of zone 4",
+                "hours_5": "Hours of zone 5",
+                "hours_6": "Hours of zone 6"
+              }
+            }
+          }
+        },
+        "rename": {
+          "title": "Rename {name}",
+          "description": "Changing the id also updates the applied history and the comparison list.",
+          "data": {
+            "name": "Name",
+            "id": "Id"
+          },
+          "data_description": {
+            "name": "Shown in reports and on the integration page.",
+            "id": "Use a-z, 0-9 and _ (1 to 32 characters)."
+          }
+        }
+      },
+      "error": {
+        "blank_name": "The name must not be blank.",
+        "invalid_id": "Use only a-z, 0-9 and _ (1 to 32 characters).",
+        "id_taken": "Another tariff already uses this id.",
+        "invalid_price": "Enter a price such as 10.30 (digits with an optional decimal part, not negative).",
+        "invalid_hours": "Enter hours such as 07:00-23:00 (whole hours; separate several periods with commas).",
+        "hours_overlap": "The hours of this zone overlap with another zone.",
+        "hours_uncovered": "These hours belong to no zone: {hours}.",
+        "invalid_zone_key": "Use a-z, 0-9 and _ (1 to 32 characters).",
+        "duplicate_zone_key": "Zone keys must be different.",
+        "valid_from_taken": "Another version already starts on this date.",
+        "applied_without_version": "The applied history uses this tariff from a date that would have no version. Change the applied history first.",
+        "last_version": "The only version cannot be deleted. Delete the tariff instead.",
+        "invalid_tariff": "The tariff configuration is invalid: {detail}",
+        "applied_order": "The applied history starts this tariff on the date that changes here. The new date would change the order of the applied history. Change the applied history first."
+      },
+      "abort": {
+        "reconfigure_successful": "The tariff was updated.",
+        "invalid_stored_tariff": "The stored tariff is invalid. Delete it and add it again."
+      }
+    }
+  },
   "selector": {
+    "tariff_base": {
+      "options": {
+        "single_rate": "Single rate",
+        "ru_two_zone": "Two zones (day and night)",
+        "ru_three_zone": "Three zones (peak, semi-peak and night)",
+        "custom": "Custom zones",
+        "copy": "Copy of an existing tariff"
+      }
+    },
     "grouping": {
       "options": {
         "hour": "Hour",

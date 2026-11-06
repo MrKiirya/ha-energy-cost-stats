@@ -51,6 +51,13 @@ three-zone residential tariffs.
   reloaded entry holds the parsed tariff configuration and the effective schedule (`None` when nothing is
   applied), so adding, editing or deleting a tariff or changing the applied history re-prices all past hours.
   The config entry has `VERSION` 2; version 1 (one `tariff_plan` subentry per plan) is migrated at startup (§3).
+  Before reloading, the update listener reconciles the options with the tariff subentries (Home Assistant lets users
+  delete any subentry): a deleted tariff is removed from `applied` (the previous item continues over the freed
+  period, equal neighbours merge; when the first item is removed the next one takes over its start if that tariff
+  has a version valid then, otherwise it keeps its own date and earlier hours stay unpriced; if nothing remains
+  applied but tariffs do, the first remaining tariff is applied from its first version; no tariffs left means
+  nothing applied) and from an explicit `compare` list; the first tariff added to an entry without tariffs is applied
+  from its first version.
 - Card (Lit + TypeScript, `frontend/`): renders the table; served by the integration itself (static path + extra JS),
   so users install one HACS repo. Details in §4.1.
 - Stage 2 (optional): write **4 external statistics** series for the Energy dashboard:
@@ -112,8 +119,22 @@ Rules (parsing is strict: unknown keys, wrong types and bad dates raise `TariffV
 
 Storage: one config subentry of type `tariff` per tariff, with `unique_id` = `id`, title = `name` and data = the
 tariff's document (presets kept as written, so the forms and the YAML export show what the user entered).
-`entry.options` gains `applied` (list of `{from, tariff}`) and optional `compare` (list of ids). The `tariff`
-forms and the options menu come in task 018; until then the document is edited by tests and the migration only.
+`entry.options` gains `applied` (list of `{from, tariff}`) and optional `compare` (list of ids).
+
+Forms (subentry flow, task 018): "Add tariff" asks for a name and a base (single-rate, two-zone, three-zone, custom
+zones of 1 to 6, or a copy of the latest version of an existing tariff), then the id (prefilled from the name) and
+the first version (date and one section per zone with name, price and hours). The gear on a tariff row opens a menu:
+add a version (prices, hours only when they change; a version dated before the first one becomes the new first
+version with explicit zones, the former first version keeps its zones; it prices hours only once the applied history
+starts on or before it), edit or delete a version, rename the tariff (name and id; the id also updates `applied` and
+`compare`). Every change is validated against the **whole** configuration and reloads the entry, so edits re-price
+past hours. Prices are typed as text (a comma is accepted) and stored with a dot. A preset first version stays in
+preset form (`prices`, plus `hours` for changed zones) until a zone is renamed, then it is stored as explicit
+`zones`. Moving the first version of a tariff, or deleting it, also moves an `applied` item that started on the old
+first date (to the new first date); a move that would change the order of the applied history is rejected
+(`applied_order`), and an applied start left without a version is rejected too (`applied_without_version`). Deleting
+the first version makes the next one self-contained. The options menu (applied history, comparison list, sensors) is
+task 019.
 
 Migration (config entry version 1 → 2): existing `tariff_plan` subentries become one tariff `id: main` (name of
 the latest plan) whose versions are the old plans with explicit zones; `applied: [{from: <first valid_from>, tariff:
