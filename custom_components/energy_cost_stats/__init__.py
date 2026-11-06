@@ -2,9 +2,9 @@
 
 Sets up the single config entry: parses the stored options into typed settings,
 resolves the time zone and keeps both in ``entry.runtime_data``. Options changes
-(and, later, tariff-plan subentry changes) reload the entry through one update
-listener. No entities, platforms or services are set up here yet; those arrive in
-later stages (see docs/SPEC.md §8).
+(and tariff-plan subentry changes) reload the entry through one update listener.
+The websocket command and the response-only service are registered once in
+``async_setup``; they read the loaded entry. No entities or platforms are created.
 """
 
 from dataclasses import dataclass
@@ -20,7 +20,9 @@ from homeassistant.util import dt as dt_util
 from .const import DOMAIN, SUBENTRY_TYPE_TARIFF_PLAN
 from .engine.plan_codec import plan_from_data
 from .engine.tariff import TariffPlan, TariffSchedule, TariffValidationError
+from .services import async_register_services
 from .settings import IntegrationSettings, SettingsError, settings_from_options
+from .websocket import async_register_websocket
 
 CONFIG_SCHEMA = cv.empty_config_schema(DOMAIN)
 
@@ -38,7 +40,9 @@ type EnergyCostStatsConfigEntry = ConfigEntry[RuntimeData]
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
-    """Set up the Energy Cost Stats integration (no entities, no platforms)."""
+    """Register the websocket command and the service (no entities, no platforms)."""
+    async_register_websocket(hass)
+    async_register_services(hass)
     return True
 
 
