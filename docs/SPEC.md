@@ -193,7 +193,7 @@ the repo as is, with no build step) and CI fails when it does not match the sour
   extra module does this by itself.
 - **Config.** `title`, `entities` (subset of the configured sensors; default all), `period` (initial preset,
   default `this_month`), `grouping` (`auto` / `hour` / `day` / `week` / `month` for the "by period" table,
-  default `auto`), `show_breakdown` (bool). No visual editor yet.
+  default `auto`), `show_breakdown` (bool), `compare` (1–5 tariff scenarios, §4.2). No visual editor yet.
 - **Period picker** (modelled on the Energy dashboard's period selector). A period is a closed range of local
   dates. Presets: today, yesterday, this/last week, this/last month, this quarter, this year, last 7 / 30 days,
   last 12 months, or a custom range. Arrows move by the period's own size: a range of whole calendar months
@@ -214,6 +214,27 @@ the repo as is, with no build step) and CI fails when it does not match the sour
   Notes: no tariff plan, unpriced hours; a collapsible "data quality" list shows the issues.
 - **Language.** English and Russian strings in the card (`hass.locale.language`); numbers, money (HA currency) and
   dates via `Intl` in that locale.
+
+### 4.2 Tariff comparison (`energy_cost_stats/compare`)
+Implemented in task 015. "What would this period have cost on another tariff?" — the same counted consumption
+(same statistics read, same data-quality rules) priced with the configured plans and with 1–5 hypothetical
+plans ("scenarios").
+- **Request:** `start`, `end`, optional `entities` — same rules as `report` (§2) — and `scenarios`: a list of
+  `{ "preset": "single_rate" | "ru_two_zone" | "ru_three_zone", "prices": { <zone key>: "<decimal string>" },
+  "periods"?: { <zone key>: "07:00-10:00, 17:00-21:00" }, "name"? }`. `prices` must name exactly the preset's
+  zones (`t0`; `t1`,`t2`; `t1`,`t2`,`t3`); `periods` optionally overrides a zone's hours (regional variants of the
+  three-zone tariff); the plan must still cover every hour once. A scenario applies to the whole window (no
+  plan history). Errors: as `report`, plus `invalid_scenario` (wrong preset/prices/periods, not 1–5 scenarios;
+  the message names the scenario).
+- **Response:** `{ "actual": <document>, "scenarios": [ { "name", "preset", "report": <document> } ] }` where every
+  `<document>` is the §4 JSON document with grouping `total`. `actual` is priced with the configured plans
+  (`cost` may be partial or `null` where no plan covers the window); a scenario prices every counted hour.
+  Websocket only (read-only, no admin); no service yet.
+- **Card:** a "Tariff comparison" section when `compare` is configured (YAML numbers in `prices` are sent as
+  strings). Rows: current tariff (plan names) and each scenario with kWh per zone (zones without hours are
+  hidden; preset zones get localized names by key), cost, average price and the difference to the current
+  tariff (amount and %); the cheapest gets a "best" badge only when it is unique. Re-requested when the period
+  changes, not when only the grouping changes.
 
 ## 5. Known pitfalls to handle
 - Engine input is hourly deltas keyed by **UTC hour start**; zones, plan switches and groupings use local
