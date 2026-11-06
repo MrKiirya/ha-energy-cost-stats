@@ -28,16 +28,10 @@ def test_devcontainer_json():
     assert 8123 in data["forwardPorts"]
     assert "script/setup" in data["postCreateCommand"]
 
-    features = data.get("features", {})
-    node_feature_keys = [
-        key
-        for key in features
-        if key.startswith("ghcr.io/devcontainers/features/node:")
-    ]
-    assert len(node_feature_keys) == 1, (
-        f"expected exactly one node feature key, found {node_feature_keys}"
-    )
-    assert features[node_feature_keys[0]]["version"] == "24"
+    # Node comes from the Dockerfile (see test_dockerfile_pins_node), not from the
+    # devcontainers node feature: its `RUN --mount` build step fails on
+    # SELinux-enforcing rootless podman hosts.
+    assert "features" not in data
 
     extensions = data["customizations"]["vscode"]["extensions"]
     for expected in (
@@ -214,3 +208,21 @@ def test_smoke_develop_fails_on_default_config_dependencies():
     assert "Unable to set up dependencies of 'default_config'" in content
     assert re.search(r"Setup failed for .*default_config", content)
     assert "Attempting install of" in content
+
+
+def test_dockerfile_pins_node():
+    """Node 24 LTS is copied from the official image, pinned by tag and digest."""
+    text = DOCKERFILE.read_text(encoding="utf-8")
+    copies = [
+        line
+        for line in text.splitlines()
+        if line.startswith("COPY --from=docker.io/library/node:")
+    ]
+    assert copies, "no 'COPY --from=docker.io/library/node:...' line in Dockerfile"
+    for line in copies:
+        ref = line.split()[1].removeprefix("--from=")
+        tag, _, digest = ref.partition("@sha256:")
+        assert tag.removeprefix("docker.io/library/node:").startswith("24."), line
+        assert len(digest) == 64, f"node image not pinned by digest: {line}"
+    assert len({line.split()[1] for line in copies}) == 1, "node COPY lines differ"
+    assert "/usr/local/bin/npm" in text
