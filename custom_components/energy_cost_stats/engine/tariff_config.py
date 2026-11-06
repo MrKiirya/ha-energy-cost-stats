@@ -14,7 +14,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Any
+from typing import Any, Literal
 
 from .plan_codec import parse_periods, parse_price
 from .presets import PRESET_ZONES
@@ -45,6 +45,23 @@ class AppliedChange:
 
     from_date: date
     tariff: str
+
+
+class AppliedValidationError(TariffValidationError):
+    """The applied history is invalid; ``code`` says why (usable as a form error)."""
+
+    def __init__(
+        self,
+        code: Literal["unknown_tariff", "duplicate_from", "no_version"],
+        message: str,
+        change: AppliedChange | None = None,
+        first_valid_from: date | None = None,
+    ) -> None:
+        """Keep the machine-readable details next to the message."""
+        super().__init__(message)
+        self.code = code
+        self.change = change
+        self.first_valid_from = first_valid_from
 
 
 @dataclass(frozen=True, slots=True)
@@ -280,7 +297,9 @@ def _applied(raw: Any, tariffs: Mapping[str, Tariff]) -> tuple[AppliedChange, ..
     changes: list[AppliedChange] = []
     if isinstance(raw, str):
         if raw not in tariffs:
-            raise _fail(f"applied: unknown tariff {raw!r}")
+            raise AppliedValidationError(
+                "unknown_tariff", f"applied: unknown tariff {raw!r}"
+            )
         changes.append(AppliedChange(tariffs[raw].versions[0].valid_from, raw))
     else:
         for item in _list(raw, "applied"):
@@ -290,20 +309,41 @@ def _applied(raw: Any, tariffs: Mapping[str, Tariff]) -> tuple[AppliedChange, ..
             if missing:
                 raise _fail(f"applied item: missing keys {', '.join(missing)}")
             tariff_id = _text(entry["tariff"], "applied tariff")
-            if tariff_id not in tariffs:
-                raise _fail(f"applied: unknown tariff {tariff_id!r}")
             changes.append(
                 AppliedChange(_date(entry["from"], "applied from"), tariff_id)
             )
-    changes.sort(key=lambda change: change.from_date)
-    starts = [change.from_date for change in changes]
-    if len(set(starts)) != len(starts):
-        raise _fail("applied: duplicate from date")
+    return check_applied(tuple(tariffs.values()), changes)
+
+
+def check_applied(
+    tariffs: Sequence[Tariff], applied: Sequence[AppliedChange]
+) -> tuple[AppliedChange, ...]:
+    """Sort and validate the applied history; raises ``AppliedValidationError``."""
+    by_id = {item.id: item for item in tariffs}
+    changes = sorted(applied, key=lambda change: change.from_date)
     for change in changes:
-        if tariffs[change.tariff].versions[0].valid_from > change.from_date:
-            raise _fail(
+        if change.tariff not in by_id:
+            raise AppliedValidationError(
+                "unknown_tariff",
+                f"applied: unknown tariff {change.tariff!r}",
+                change,
+            )
+    seen: set[date] = set()
+    for change in changes:
+        if change.from_date in seen:
+            raise AppliedValidationError(
+                "duplicate_from", "applied: duplicate from date", change
+            )
+        seen.add(change.from_date)
+    for change in changes:
+        first = by_id[change.tariff].versions[0].valid_from
+        if first > change.from_date:
+            raise AppliedValidationError(
+                "no_version",
                 f"applied: tariff {change.tariff!r} has no version valid on "
-                f"{change.from_date.isoformat()}"
+                f"{change.from_date.isoformat()}",
+                change,
+                first,
             )
     return tuple(changes)
 

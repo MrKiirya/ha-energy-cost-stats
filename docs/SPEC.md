@@ -42,12 +42,22 @@ three-zone residential tariffs.
 - Settings (single instance, `single_config_entry`): all settings live in `entry.options` (`entry.data` is empty):
   `time_zone`, `spike_limit` (decimal string, `null` = check off), `device_spike_limits` (entity id -> decimal
   string; missing = use the global limit, `null` = off for that device), `entities`, `applied` (list of
-  `{from, tariff}`, §3; omitted = nothing applied) and optional `compare` (list of tariff ids, §3). Decimals are
+  `{from, tariff}`, §3; omitted = nothing applied), optional `compare` (list of tariff ids, §3) and optional
+  `panel` (`{show, title, icon}`, the planned sidebar entry; stored only, it has no effect yet). Decimals are
   strings without exponent. The time zone is stored explicitly (default: the Home Assistant time zone at setup) and does
   not follow later Home Assistant changes, so retroactive prices never move silently. The config flow asks for
-  time zone and spike limit; the options flow edits them, selects the energy sensors and optionally sets
-  per-device spike limits (empty = global, `0` = off). Any options or subentry change reloads the entry through a
-  single update listener (not `OptionsFlowWithReload`, which is missing in the minimum HA version). The
+  time zone and spike limit. "Configure" opens an options menu: **Sensors** (energy sensors, optional
+  per-device spike limits: empty = global, `0` = off), **Applied tariffs** (a table of the history; use one tariff
+  for everything, add a change, re-date / re-assign / delete a change), **Tariff comparison** (default set or an
+  explicit list) and **General settings** (time zone, spike limit, sidebar options). Every leaf form re-reads
+  the current options on submit and saves the full option set. The forms that change the tariff document
+  (applied history, comparison) first check the candidate with the same document the setup builds
+  (`settings.tariff_document` + `config_from_data`), so a stored configuration always sets up; applied-history
+  problems surface as field errors `duplicate_from`, `no_version`, `unknown_tariff`, and a problem in an entry
+  the user did not just edit (a broken stored history) as a form error with the engine message. The applied and
+  comparison steps abort with `no_tariffs` while there is no tariff.
+  Any options or subentry change reloads the entry through a single update listener (not
+  `OptionsFlowWithReload`, which is missing in the minimum HA version). The
   reloaded entry holds the parsed tariff configuration and the effective schedule (`None` when nothing is
   applied), so adding, editing or deleting a tariff or changing the applied history re-prices all past hours.
   The config entry has `VERSION` 2; version 1 (one `tariff_plan` subentry per plan) is migrated at startup (§3).
@@ -119,7 +129,9 @@ Rules (parsing is strict: unknown keys, wrong types and bad dates raise `TariffV
 
 Storage: one config subentry of type `tariff` per tariff, with `unique_id` = `id`, title = `name` and data = the
 tariff's document (presets kept as written, so the forms and the YAML export show what the user entered).
-`entry.options` gains `applied` (list of `{from, tariff}`) and optional `compare` (list of ids).
+`entry.options` gains `applied` (list of `{from, tariff}`) and optional `compare` (list of ids). The applied
+history and the comparison list are edited in the options menu (task 019); with an explicit empty `compare` list
+nothing is compared, without the key the default set is used.
 
 Forms (subentry flow, task 018): "Add tariff" asks for a name and a base (single-rate, two-zone, three-zone, custom
 zones of 1 to 6, or a copy of the latest version of an existing tariff), then the id (prefilled from the name) and
@@ -133,8 +145,7 @@ preset form (`prices`, plus `hours` for changed zones) until a zone is renamed, 
 `zones`. Moving the first version of a tariff, or deleting it, also moves an `applied` item that started on the old
 first date (to the new first date); a move that would change the order of the applied history is rejected
 (`applied_order`), and an applied start left without a version is rejected too (`applied_without_version`). Deleting
-the first version makes the next one self-contained. The options menu (applied history, comparison list, sensors) is
-task 019.
+the first version makes the next one self-contained. 
 
 Migration (config entry version 1 → 2): existing `tariff_plan` subentries become one tariff `id: main` (name of
 the latest plan) whose versions are the old plans with explicit zones; `applied: [{from: <first valid_from>, tariff:

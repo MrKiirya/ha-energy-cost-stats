@@ -27,18 +27,22 @@
     "step": {
       "init": {
         "title": "Energy Cost Stats options",
-        "description": "Select the energy sensors to report on and adjust the global settings.",
+        "description": "Choose what to configure. Every change is checked and then re-prices all past hours.",
+        "menu_options": {
+          "sensors": "Sensors",
+          "applied": "Applied tariffs",
+          "compare": "Tariff comparison",
+          "general": "General settings"
+        }
+      },
+      "sensors": {
+        "title": "Sensors",
+        "description": "Select the energy sensors to report on.",
         "data": {
-          "time_zone": "Time zone",
-          "spike_check": "Check for consumption spikes",
-          "spike_limit": "Spike limit",
           "entities": "Energy sensors",
           "edit_device_limits": "Edit per-device spike limits"
         },
         "data_description": {
-          "time_zone": "Used for tariff zones and daily, weekly and monthly groupings.",
-          "spike_check": "Flag hours with implausibly high consumption in the data-quality report.",
-          "spike_limit": "Maximum plausible consumption per device and hour. Ignored when the spike check is off.",
           "entities": "Sensors with device class energy.",
           "edit_device_limits": "Open an extra step to set a different spike limit for individual sensors."
         }
@@ -46,14 +50,103 @@
       "device_limits": {
         "title": "Per-device spike limits",
         "description": "Leave empty to use the global limit, 0 turns the check off for this device."
+      },
+      "general": {
+        "title": "General settings",
+        "description": "Time zone, spike detection and the optional sidebar entry.",
+        "data": {
+          "time_zone": "Time zone",
+          "spike_check": "Check for consumption spikes",
+          "spike_limit": "Spike limit"
+        },
+        "data_description": {
+          "time_zone": "Used for tariff zones and daily, weekly and monthly groupings.",
+          "spike_check": "Flag hours with implausibly high consumption in the data-quality report.",
+          "spike_limit": "Maximum plausible consumption per device and hour. Ignored when the spike check is off."
+        },
+        "sections": {
+          "sidebar": {
+            "name": "Sidebar",
+            "description": "Show the energy cost panel in the sidebar. The panel itself is not available yet; the settings are stored for later.",
+            "data": {
+              "show": "Show in sidebar",
+              "title": "Title",
+              "icon": "Icon"
+            }
+          }
+        }
+      },
+      "applied": {
+        "title": "Applied tariffs",
+        "description": "The tariff in use from each date on. Hours before the first date are not priced.\n\n| From | Tariff |\n|---|---|\n{history}",
+        "menu_options": {
+          "applied_single": "Use one tariff for everything",
+          "applied_add": "Add a change",
+          "applied_pick": "Edit or delete a change"
+        }
+      },
+      "applied_single": {
+        "title": "Use one tariff",
+        "description": "Replaces the whole history with a single entry. Leave the date empty to start with the first version of the tariff.",
+        "data": {
+          "tariff": "Tariff",
+          "from": "From"
+        },
+        "data_description": {
+          "from": "Optional. The first date the tariff is used; empty means the first version of the chosen tariff. It must not be earlier than that version."
+        }
+      },
+      "applied_add": {
+        "title": "Add a change",
+        "description": "From the chosen date on, the chosen tariff is used.",
+        "data": {
+          "from": "From",
+          "tariff": "Tariff"
+        },
+        "data_description": {
+          "from": "The date must not be earlier than the first version of the tariff."
+        }
+      },
+      "applied_pick": {
+        "title": "Edit a change",
+        "description": "Choose the change to edit or delete.",
+        "data": {
+          "change": "Change"
+        }
+      },
+      "applied_change": {
+        "title": "Edit a change",
+        "description": "Change the date or the tariff, or delete the change. Deleting the last change leaves every hour unpriced.",
+        "data": {
+          "from": "From",
+          "tariff": "Tariff",
+          "delete": "Delete this change"
+        }
+      },
+      "compare": {
+        "title": "Tariff comparison",
+        "description": "Choose which tariffs the cost is compared with. By default these are all tariffs that were never applied: {default}.",
+        "data": {
+          "use_default": "Use the default set",
+          "tariffs": "Compared tariffs"
+        },
+        "data_description": {
+          "use_default": "Compare every tariff that is not in the applied history.",
+          "tariffs": "Used when the default set is off."
+        }
       }
     },
     "error": {
       "not_energy_entity": "Only sensors with device class energy can be selected.",
-      "invalid_limit": "Enter a finite number (greater than 0 for the global limit, 0 or more for a device)."
+      "invalid_limit": "Enter a finite number (greater than 0 for the global limit, 0 or more for a device).",
+      "duplicate_from": "Another change already starts on this date.",
+      "no_version": "The tariff has no version valid on this date (earliest: {first_valid_from}).",
+      "unknown_tariff": "This tariff does not exist.",
+      "invalid_config": "The configuration would be invalid: {detail}"
     },
     "abort": {
-      "invalid_options": "The stored options are invalid. Remove and add the integration again."
+      "invalid_options": "The stored options are invalid. Remove and add the integration again.",
+      "no_tariffs": "Add a tariff first."
     }
   },
   "config_subentries": {

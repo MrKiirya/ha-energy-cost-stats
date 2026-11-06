@@ -8,9 +8,11 @@ import pytest
 
 from custom_components.energy_cost_stats.settings import (
     IntegrationSettings,
+    PanelSettings,
     SettingsError,
     settings_from_options,
     settings_to_options,
+    tariff_document,
 )
 
 EXAMPLE: dict[str, Any] = {
@@ -147,3 +149,52 @@ def test_rejects_malformed_applied(bad: Any):
 def test_rejects_malformed_compare(bad: Any):
     with pytest.raises(SettingsError, match="compare"):
         settings_from_options(_with(compare=bad))
+
+
+PANEL = {"show": True, "title": "Energy cost", "icon": "mdi:cash-multiple"}
+
+
+def test_panel_round_trip():
+    options = _with(panel=PANEL)
+    settings = settings_from_options(options)
+    assert settings.panel == PanelSettings(True, "Energy cost", "mdi:cash-multiple")
+    assert settings_to_options(settings) == options
+
+
+def test_panel_absent_is_none_and_not_written():
+    settings = settings_from_options(EXAMPLE)
+    assert settings.panel is None
+    assert "panel" not in settings_to_options(settings)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "yes",
+        {**PANEL, "extra": 1},
+        {**PANEL, "show": "true"},
+        {**PANEL, "title": "  "},
+        {**PANEL, "icon": ""},
+        {"show": True, "title": "Energy cost"},
+    ],
+)
+def test_panel_rejects_malformed(bad: Any):
+    with pytest.raises(SettingsError):
+        settings_from_options(_with(panel=bad))
+
+
+def test_tariff_document():
+    tariffs = [{"id": "a", "name": "A", "versions": []}]
+    settings = settings_from_options(
+        _with(applied=[{"from": "2026-01-01", "tariff": "a"}])
+    )
+    assert tariff_document(settings, tariffs) == {
+        "tariffs": tariffs,
+        "applied": [{"from": "2026-01-01", "tariff": "a"}],
+    }
+    with_compare = settings_from_options(_with(compare=["a"]))
+    assert tariff_document(with_compare, tariffs) == {
+        "tariffs": tariffs,
+        "applied": [],
+        "compare": ["a"],
+    }

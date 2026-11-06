@@ -39,7 +39,12 @@ from .engine.tariff_config import TariffConfig, config_from_data, effective_sche
 from .engine.tariff_edit import remove_from_applied
 from .frontend import async_register_card
 from .services import async_register_services
-from .settings import IntegrationSettings, SettingsError, settings_from_options
+from .settings import (
+    IntegrationSettings,
+    SettingsError,
+    settings_from_options,
+    tariff_document,
+)
 from .websocket import async_register_websocket
 
 _LOGGER = logging.getLogger(__name__)
@@ -81,14 +86,9 @@ async def async_setup_entry(
     if tz is None:
         raise ConfigEntryError(f"Unknown time zone: {settings.time_zone!r}")
 
-    document: dict[str, Any] = {
-        "tariffs": [subentry.data for subentry in _tariff_subentries(entry)],
-        "applied": [
-            {"from": start, "tariff": tariff} for start, tariff in settings.applied
-        ],
-    }
-    if settings.compare is not None:
-        document["compare"] = list(settings.compare)
+    document = tariff_document(
+        settings, (subentry.data for subentry in _tariff_subentries(entry))
+    )
     try:
         tariffs = config_from_data(document)
         schedule = effective_schedule(tariffs)
