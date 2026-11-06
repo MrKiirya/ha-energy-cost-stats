@@ -75,6 +75,8 @@ packages reverted by `uv run`.
 - `golden` — real statistics fixtures → report snapshots (syrupy). Raw exports live in the git-ignored
   `tests/fixtures/private/` (tests skip if absent); only **anonymized** fixtures are committed
   (generic entity ids like `sensor.plug_01`, shifted dates, no names/areas/locations).
+- Convention: a key added to the YAML parser must be added to `schema/energy_cost_stats.schema.json`
+  (enforced by `test_yaml_schema_sync`).
 
 ## Public repo hygiene
 Never commit: real entity ids/device names from the author's home, raw statistics exports, HA `config/`

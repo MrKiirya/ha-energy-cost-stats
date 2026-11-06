@@ -111,12 +111,9 @@ energy_cost_stats:
 - `overrides` holds per-sensor parameters (currently `spike_limit`), independent of how sensors are selected.
 
 ### Modes
-- **YAML mode:** the `energy_cost_stats:` block is present in `configuration.yaml` (or a package). The UI shows
-  the configuration read-only; edits go to the file and are applied with `energy_cost_stats.reload` (no
-  restart). Validation errors are reported as repairs and in the log.
-- **UI mode:** no YAML block; everything is configured through the forms below. "Export to YAML" produces the
-  block above for moving to YAML mode.
-- Mixing both sources is not supported (one source of truth).
+- **YAML mode:** the `energy_cost_stats:` block is present; the UI is read-only, edits go to the file and are
+  applied with `energy_cost_stats.reload`. **UI mode:** no block; "Export to YAML" produces the block above.
+  Mixing both sources is not supported. Details: docs/SPEC.md §2 "YAML mode" and §6.1 (JSON Schema).
 
 ## UI
 ### Integration page

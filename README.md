@@ -8,6 +8,26 @@ retroactively, from Home Assistant's existing long-term statistics, without crea
 
 > **Status:** work in progress, not ready for use yet.
 
+## YAML configuration
+
+Everything can also be configured in `configuration.yaml` under `energy_cost_stats:` (same shape as the UI edits,
+see [docs/CONFIG-DESIGN.md](docs/CONFIG-DESIGN.md)). The block then replaces the UI configuration; apply changes
+without a restart with the action `energy_cost_stats.reload` (Developer tools, YAML). The options menu has
+**Export to YAML** to start from the current configuration.
+
+For editor validation and completion keep the block in its own file and add the schema modeline:
+
+```yaml
+# configuration.yaml
+energy_cost_stats: !include energy_cost_stats.yaml
+```
+```yaml
+# energy_cost_stats.yaml
+# yaml-language-server: $schema=https://raw.githubusercontent.com/MrKiirya/ha-energy-cost-stats/master/schema/energy_cost_stats.schema.json
+time_zone: Europe/Berlin
+tariffs: []
+```
+
 ## Development
 
 Two setups, managed with [uv](https://docs.astral.sh/uv/):
