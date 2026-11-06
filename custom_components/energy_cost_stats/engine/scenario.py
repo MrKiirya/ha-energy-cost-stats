@@ -84,7 +84,9 @@ def scenario_from_data(data: Mapping[str, Any]) -> Scenario:
             f"scenario prices must have exactly the zones {keys} of {preset}, "
             f"got {sorted(prices)}"
         )
-    raw_periods: Any = data.get("periods") or {}
+    raw_periods: Any = data.get("periods")
+    if raw_periods is None:
+        raw_periods = {}
     if not isinstance(raw_periods, Mapping):
         raise TariffValidationError("scenario periods must be a mapping zone -> text")
     periods = cast("Mapping[str, Any]", raw_periods)

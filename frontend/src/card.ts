@@ -25,6 +25,7 @@ import {
   type Preset,
 } from "./period";
 import {
+  MAX_SCENARIOS,
   SCENARIO_PRESETS,
   errorCode,
   errorText,
@@ -102,6 +103,8 @@ export class EnergyCostStatsCard extends LitElement {
   private _comparison?: ComparisonDocument;
   private _comparisonError?: string;
   private _comparisonSeq = 0;
+  /** Period + sensors of the shown (or requested) comparison; it ignores the grouping. */
+  private _comparisonKey?: string;
   /** The integration's time zone, learned from the first report (kept on errors). */
   private _reportTimeZone?: string;
   /** The last request was cut at the current hour: refresh until it is not. */
@@ -129,8 +132,8 @@ export class EnergyCostStatsCard extends LitElement {
       throw new Error("entities must be a list of entity ids");
     }
     if (config.compare !== undefined) {
-      if (!Array.isArray(config.compare) || config.compare.length < 1 || config.compare.length > 5) {
-        throw new Error("compare must be a list of 1 to 5 tariff scenarios");
+      if (!Array.isArray(config.compare) || config.compare.length < 1 || config.compare.length > MAX_SCENARIOS) {
+        throw new Error(`compare must be a list of 1 to ${MAX_SCENARIOS} tariff scenarios`);
       }
       for (const scenario of config.compare) {
         if (
@@ -189,7 +192,7 @@ export class EnergyCostStatsCard extends LitElement {
       // Keep refreshing while the period is still running, plus once after it ended
       // (its last hour is only compiled then).
       if (this._period && this._lastRequestOpen && !this._loading) {
-        void this._load();
+        void this._load(true);
       }
     }, REFRESH_MS);
   }
@@ -210,20 +213,27 @@ export class EnergyCostStatsCard extends LitElement {
   protected override updated(changed: PropertyValues): void {
     super.updated(changed);
     if (!this.hass || !this._period) return;
-    const periodChanged =
-      changed.has("_period") || (changed.has("hass") && changed.get("hass") === undefined);
-    if (periodChanged || changed.has("_groupingChoice")) {
-      // The comparison does not depend on the grouping.
-      void this._load(periodChanged);
+    if (
+      changed.has("_period") ||
+      changed.has("_groupingChoice") ||
+      (changed.has("hass") && changed.get("hass") === undefined)
+    ) {
+      void this._load();
     }
   }
 
-  private async _load(withComparison = true): Promise<void> {
+  /**
+   * Load the report and, when `compare` is configured, the comparison. The
+   * comparison does not depend on the grouping: it is requested when its key
+   * (period and sensors) changed since the last one, or on `refresh`.
+   */
+  private async _load(refresh = false): Promise<void> {
     const hass = this.hass;
     const period = this._period;
     if (!hass || !period) return;
     const seq = ++this._requestSeq;
     const timeZone = this._timeZone;
+    const end = requestEnd(period, timeZone);
     this._loading = true;
     try {
       const report = await fetchReport(hass, {
@@ -231,6 +241,7 @@ export class EnergyCostStatsCard extends LitElement {
         grouping: this.grouping,
         entities: this._config?.entities,
         timeZone,
+        end,
       });
       if (seq !== this._requestSeq) return;
       this._report = report;
@@ -240,9 +251,18 @@ export class EnergyCostStatsCard extends LitElement {
       if (report.time_zone !== timeZone && containsDate(period, todayIn(report.time_zone))) {
         // "Today" and the current hour were computed in HA's zone, not the
         // integration's: ask again with the right one.
-        void this._load(withComparison);
-      } else if (withComparison && this._config?.compare) {
-        void this._loadComparison(period, report.time_zone);
+        void this._load(refresh);
+      } else if (this._config?.compare) {
+        const key = JSON.stringify([period, this._config.entities ?? []]);
+        if (key !== this._comparisonKey) {
+          // Never show another period's numbers next to this report.
+          this._comparison = undefined;
+          this._comparisonError = undefined;
+          this._comparisonKey = key;
+          void this._loadComparison(period, end);
+        } else if (refresh) {
+          void this._loadComparison(period, end);
+        }
       }
     } catch (err) {
       if (seq !== this._requestSeq) return;
@@ -264,7 +284,8 @@ export class EnergyCostStatsCard extends LitElement {
     }
   }
 
-  private async _loadComparison(period: Period, timeZone: string): Promise<void> {
+  /** `end` is the report request's own bound, so both price the same hours. */
+  private async _loadComparison(period: Period, end: string): Promise<void> {
     const hass = this.hass;
     const scenarios = this._config?.compare;
     if (!hass || !scenarios) return;
@@ -273,7 +294,7 @@ export class EnergyCostStatsCard extends LitElement {
       const comparison = await fetchComparison(hass, {
         period,
         entities: this._config?.entities,
-        timeZone,
+        end,
         scenarios,
       });
       if (seq !== this._comparisonSeq) return;
@@ -418,7 +439,7 @@ export class EnergyCostStatsCard extends LitElement {
           class="icon refresh"
           title=${s.t("refresh")}
           aria-label=${s.t("refresh")}
-          @click=${() => void this._load()}
+          @click=${() => void this._load(true)}
         >
           ${icon(ICON_REFRESH)}
         </button>
@@ -640,6 +661,12 @@ export class EnergyCostStatsCard extends LitElement {
       body = html`<div class="note">${s.t("loading")}</div>`;
     } else {
       const actual = comparison.actual.totals.total;
+      // The current tariff prices only the hours its plans cover; scenarios price every
+      // hour. An incomplete current cost is not comparable: no differences, no "best".
+      const actualComplete =
+        actual.cost !== null &&
+        comparison.actual.unpriced_hours === 0 &&
+        comparison.actual.plans.length > 0;
       const rows = [
         {
           name: s.t("compare.current"),
@@ -647,14 +674,16 @@ export class EnergyCostStatsCard extends LitElement {
           doc: comparison.actual,
           current: true,
         },
-        ...comparison.scenarios.map((sc) => ({
-          name: sc.name,
+        ...comparison.scenarios.map((sc, i) => ({
+          // An unnamed scenario gets the localized preset name.
+          name: this._config?.compare?.[i]?.name ?? s.presetName(sc.preset),
           sub: "",
           doc: sc.report,
           current: false,
         })),
       ];
       const costs = rows
+        .filter((r) => !r.current || actualComplete)
         .map((r) => r.doc.totals.total.cost)
         .filter((c): c is string => c !== null)
         .map(Number);
@@ -677,14 +706,18 @@ export class EnergyCostStatsCard extends LitElement {
             <tbody>
               ${rows.map((r) => {
                 const total = r.doc.totals.total;
-                const best = cheapest !== null && total.cost !== null && Number(total.cost) === cheapest;
+                const best =
+                  cheapest !== null &&
+                  total.cost !== null &&
+                  Number(total.cost) === cheapest &&
+                  (!r.current || actualComplete);
                 const diff =
-                  r.current || total.cost === null || actual.cost === null
+                  r.current || !actualComplete || total.cost === null
                     ? null
                     : Number(total.cost) - Number(actual.cost);
                 const zones = r.doc.zones
                   .flatMap((zone, i) => {
-                    const kwh = total.zones[i]?.kwh ?? null;
+                    const kwh = total.zones.find((cell) => cell.key === zone.key)?.kwh ?? null;
                     if (kwh === null) return []; // zone without hours in the period
                     const name = r.current ? zone.name : s.zoneName(zone.key, r.doc.zones.length);
                     return [`${name} ${s.number(kwh, 1)}`];
@@ -707,7 +740,7 @@ export class EnergyCostStatsCard extends LitElement {
             </tbody>
           </table>
         </div>
-        ${comparison.actual.unpriced_hours > 0 || comparison.actual.plans.length === 0
+        ${!actualComplete
           ? html`<div class="note warning">${s.t("compare.actual_incomplete")}</div>`
           : nothing}
       `;

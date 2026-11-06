@@ -1,12 +1,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "../src/index";
 import type { EnergyCostStatsCard } from "../src/card";
-import type { HassLike } from "../src/report";
+import type { HassLike, ScenarioConfig } from "../src/report";
 import { comparison, report } from "./fixtures";
 
 type Msg = Record<string, unknown>;
 
-const COMPARE = [
+const COMPARE: ScenarioConfig[] = [
   { preset: "single_rate", prices: { t0: 7.5 } },
   { name: "Three-zone", preset: "ru_three_zone", prices: { t1: "12", t3: "9", t2: "4" } },
 ];
@@ -144,6 +144,103 @@ describe("tariff comparison", () => {
     expect(card.shadowRoot!.querySelector("details.comparison")!.textContent).toContain(
       "does not cover the whole period",
     );
+  });
+
+  it("does not compare against an incomplete current tariff", async () => {
+    const doc = comparison();
+    doc.actual.unpriced_hours = 5;
+    doc.actual.totals.total.cost = "10.00"; // only the priced hours: looks cheapest
+    const { card } = await mount({ compare: COMPARE }, makeHass(async () => doc));
+    const rows = [...card.shadowRoot!.querySelectorAll("table.compare tbody tr")];
+    expect(rows[0]!.classList.contains("best")).toBe(false);
+    // The cheapest scenario (single-rate 56.25 < three-zone 58.50) is still marked.
+    expect(rows[1]!.classList.contains("best")).toBe(true);
+    for (const row of rows.slice(1)) {
+      expect(row.querySelector("td.diff")!.textContent!.trim()).toBe("—");
+    }
+  });
+
+  it("names unnamed scenarios by their preset in the card's language", async () => {
+    const hass = makeHass();
+    hass.language = "ru";
+    hass.locale = { language: "ru" };
+    const { card } = await mount({ compare: [{ preset: "single_rate", prices: { t0: 7.5 } }] }, hass);
+    const name = card.shadowRoot!.querySelectorAll("table.compare tbody th.name")[1]!.textContent;
+    expect(name).toContain("Однозонный");
+  });
+
+  it("requests the new period's comparison even if the grouping changed meanwhile", async () => {
+    // Reports resolve only when released; comparisons immediately.
+    const pending: (() => void)[] = [];
+    const calls: Msg[] = [];
+    const hass: HassLike & { calls: Msg[] } = {
+      calls,
+      language: "en",
+      locale: { language: "en" },
+      config: { time_zone: "Europe/Moscow", currency: "RUB" },
+      callWS: <T>(msg: Msg) => {
+        calls.push(msg);
+        if (msg.type === "energy_cost_stats/compare") return Promise.resolve(comparison()) as Promise<T>;
+        return new Promise<T>((resolve) => pending.push(() => resolve(report() as T)));
+      },
+    };
+    const card = document.createElement("energy-cost-stats-card") as EnergyCostStatsCard;
+    card.setConfig({ type: "custom:energy-cost-stats-card", compare: COMPARE, show_breakdown: true });
+    card.hass = hass;
+    document.body.appendChild(card);
+    await settle(card);
+    pending.shift()!();
+    await settle(card);
+    expect(compareCalls(hass)).toHaveLength(1);
+    expect(card.shadowRoot!.querySelectorAll("table.compare tbody tr")).toHaveLength(3);
+
+    // New period, then a grouping change before its report arrives.
+    card.shadowRoot!.querySelector<HTMLButtonElement>("button.prev")!.click();
+    await settle(card);
+    const select = card.shadowRoot!.querySelector<HTMLSelectElement>("select.grouping")!;
+    select.value = "week";
+    select.dispatchEvent(new Event("change"));
+    await settle(card);
+    while (pending.length) pending.shift()!();
+    await settle(card);
+
+    expect(compareCalls(hass)).toHaveLength(2);
+    expect(compareCalls(hass)[1]).toMatchObject({ start: "2026-10-01", end: "2026-11-01" });
+  });
+
+  it("clears the previous period's comparison until the new one arrives", async () => {
+    let releaseCompare: () => void = () => {};
+    let compareCount = 0;
+    const hass = makeHass(
+      () =>
+        new Promise((resolve) => {
+          compareCount += 1;
+          if (compareCount === 1) resolve(comparison());
+          else releaseCompare = () => resolve(comparison());
+        }),
+    );
+    const { card } = await mount({ compare: COMPARE }, hass);
+    expect(card.shadowRoot!.querySelectorAll("table.compare tbody tr")).toHaveLength(3);
+    card.shadowRoot!.querySelector<HTMLButtonElement>("button.prev")!.click();
+    await settle(card);
+    expect(card.shadowRoot!.querySelector("table.compare")).toBeNull();
+    expect(card.shadowRoot!.querySelector("details.comparison")!.textContent).toContain("Loading");
+    releaseCompare();
+    await settle(card);
+    expect(card.shadowRoot!.querySelectorAll("table.compare tbody tr")).toHaveLength(3);
+  });
+
+  it("uses the report request's end for the comparison", async () => {
+    const { hass } = await mount({ compare: COMPARE });
+    const reportCall = hass.calls.find((c) => c.type === "energy_cost_stats/report")!;
+    expect(compareCalls(hass)[0]!.end).toBe(reportCall.end);
+  });
+
+  it("refresh re-requests the comparison", async () => {
+    const { card, hass } = await mount({ compare: COMPARE });
+    card.shadowRoot!.querySelector<HTMLButtonElement>("button.refresh")!.click();
+    await settle(card);
+    expect(compareCalls(hass)).toHaveLength(2);
   });
 
   it.each([

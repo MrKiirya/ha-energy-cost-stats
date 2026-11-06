@@ -72,6 +72,8 @@ export const WS_TYPE_REPORT = "energy_cost_stats/report";
 export const WS_TYPE_COMPARE = "energy_cost_stats/compare";
 
 export const SCENARIO_PRESETS = ["single_rate", "ru_two_zone", "ru_three_zone"] as const;
+/** Same limit as the backend's `engine/scenario.py::MAX_SCENARIOS`. */
+export const MAX_SCENARIOS = 5;
 
 /** A tariff scenario as written in the card config (prices may be YAML numbers). */
 export interface ScenarioConfig {
@@ -102,13 +104,15 @@ export interface ReportQuery {
   /** Time zone for "today" and the current hour (the report's, else HA's). */
   timeZone?: string;
   now?: Date;
+  /** Explicit `end` bound (else computed by `requestEnd`). */
+  end?: string;
 }
 
 export function reportMessage(query: ReportQuery): Record<string, unknown> {
   const msg: Record<string, unknown> = {
     type: WS_TYPE_REPORT,
     start: query.period.start,
-    end: requestEnd(query.period, query.timeZone, query.now),
+    end: query.end ?? requestEnd(query.period, query.timeZone, query.now),
     grouping: query.grouping,
   };
   if (query.entities && query.entities.length > 0) {
@@ -142,6 +146,8 @@ export interface ComparisonQuery {
   entities?: string[];
   timeZone?: string;
   now?: Date;
+  /** Explicit `end` bound, normally the report request's (else `requestEnd`). */
+  end?: string;
   scenarios: ScenarioConfig[];
 }
 
@@ -162,7 +168,7 @@ export function comparisonMessage(query: ComparisonQuery): Record<string, unknow
   const msg: Record<string, unknown> = {
     type: WS_TYPE_COMPARE,
     start: query.period.start,
-    end: requestEnd(query.period, query.timeZone, query.now),
+    end: query.end ?? requestEnd(query.period, query.timeZone, query.now),
     scenarios: query.scenarios.map(scenarioMessage),
   };
   if (query.entities && query.entities.length > 0) {

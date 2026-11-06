@@ -1,7 +1,9 @@
 """Unit tests for tariff comparison scenarios (tasks/015-tariff-comparison.md)."""
 
+import re
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -86,6 +88,8 @@ def test_three_zone_scenario_with_name_and_period_override():
         ({"preset": "single_rate", "prices": {"t0": "1"}, "name": "  "}, "name"),
         ({"preset": "single_rate", "prices": {"t0": "1"}, "colour": "red"}, "unknown"),
         ({"preset": "single_rate", "prices": {"t0": "1"}, "periods": ["x"]}, "periods"),
+        ({"preset": "single_rate", "prices": {"t0": "1"}, "periods": ""}, "periods"),
+        ({"preset": "single_rate", "prices": {"t0": "1"}, "periods": []}, "periods"),
     ],
 )
 def test_invalid_scenarios(data, message):
@@ -93,8 +97,14 @@ def test_invalid_scenarios(data, message):
         scenario_from_data(data)
 
 
-def test_max_scenarios_is_small():
-    assert 1 <= MAX_SCENARIOS <= 10
+def test_max_scenarios_matches_the_card():
+    """The card validates its config with the same limit (frontend/src/report.ts)."""
+    source = (Path(__file__).parents[2] / "frontend" / "src" / "report.ts").read_text(
+        encoding="utf-8"
+    )
+    match = re.search(r"export const MAX_SCENARIOS = (\d+);", source)
+    assert match is not None
+    assert int(match.group(1)) == MAX_SCENARIOS == 5
 
 
 def test_scenario_prices_the_same_consumption():
