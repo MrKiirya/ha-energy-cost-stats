@@ -60,6 +60,21 @@ const EN = {
   "error.unknown_entity": "The card lists a sensor that is not selected in the integration.",
   "error.unknown_command": "The integration is not loaded (restart Home Assistant after installing).",
   "error.generic": "Could not load the report: {message}",
+  "compare.title": "Tariff comparison",
+  "compare.tariff": "Tariff",
+  "compare.actual": "Actual",
+  "compare.difference": "Difference",
+  "compare.empty":
+    "No tariffs to compare. Choose them in the integration options (Configure → Compare).",
+  "compare.unpriced":
+    "{hours} h not priced by this tariff — the difference covers only the priced hours",
+  "compare.unpriced_actual":
+    "{hours} h not priced by the actual schedule — the difference covers only the priced hours",
+  "compare.error": "Could not load the comparison: {message}",
+  "error.unknown_tariff": "A tariff in the comparison list is not defined in the integration.",
+  "nested.title": "Measured inside {name}; not counted again in the total",
+  "nested.note":
+    "Indented rows are measured inside the device above them. The total counts their energy only for hours where the device above has no data.",
   coverage: "{measured} measured, {estimated} estimated, {excluded} excluded, {missing} missing of {expected} h",
 } as const;
 
@@ -123,6 +138,21 @@ const RU: Record<StringKey, string> = {
   "error.unknown_command":
     "Интеграция не загружена (перезапустите Home Assistant после установки).",
   "error.generic": "Не удалось загрузить отчёт: {message}",
+  "compare.title": "Сравнение тарифов",
+  "compare.tariff": "Тариф",
+  "compare.actual": "Фактически",
+  "compare.difference": "Разница",
+  "compare.empty":
+    "Нет тарифов для сравнения. Выберите их в настройках интеграции (Настроить → Сравнение).",
+  "compare.unpriced":
+    "{hours} ч не оценены этим тарифом — разница учитывает только оценённые часы",
+  "compare.unpriced_actual":
+    "{hours} ч не оценены фактическим расписанием — разница учитывает только оценённые часы",
+  "compare.error": "Не удалось загрузить сравнение: {message}",
+  "error.unknown_tariff": "Тариф из списка сравнения не определён в интеграции.",
+  "nested.title": "Измеряется внутри «{name}»; в итоге повторно не учитывается",
+  "nested.note":
+    "Строки со сдвигом измеряются внутри устройства выше. Итог учитывает их энергию только за часы, когда у устройства выше нет данных.",
   coverage:
     "{measured} измерено, {estimated} оценено, {excluded} исключено, {missing} нет из {expected} ч",
 };
@@ -159,7 +189,11 @@ export class Strings {
     }).format(Number(value));
   }
 
-  money(value: string | null | undefined, currency: string | null): string {
+  money(
+    value: string | null | undefined,
+    currency: string | null,
+    signed = false,
+  ): string {
     if (value === null || value === undefined) return "—";
     if (currency) {
       try {
@@ -168,12 +202,35 @@ export class Strings {
           currency,
           minimumFractionDigits: 2,
           maximumFractionDigits: 2,
+          ...(signed ? { signDisplay: "exceptZero" as const } : {}),
         }).format(Number(value));
       } catch {
         // Unknown currency code: plain number below.
       }
     }
-    return this.number(value, 2);
+    return signed
+      ? new Intl.NumberFormat(this.locale, {
+          minimumFractionDigits: 2,
+          maximumFractionDigits: 2,
+          signDisplay: "exceptZero",
+        }).format(Number(value))
+      : this.number(value, 2);
+  }
+
+  /** A difference with an explicit sign; `null` → dash. */
+  signedMoney(amount: number | null, currency: string | null): string {
+    return amount === null ? "—" : this.money(String(amount), currency, true);
+  }
+
+  /** A percentage with one decimal and an explicit sign; `null` → dash. */
+  signedPercent(percent: number | null): string {
+    if (percent === null) return "—";
+    const text = new Intl.NumberFormat(this.locale, {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+      signDisplay: "exceptZero",
+    }).format(percent);
+    return `${text} %`;
   }
 
   /** Average price = cost / kWh, for display only. */

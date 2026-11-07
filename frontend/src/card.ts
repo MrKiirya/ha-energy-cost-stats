@@ -24,11 +24,15 @@ import {
   type Period,
   type Preset,
 } from "./period";
+import { difference, orderNested } from "./compare";
+import { hassChanged } from "./hass";
 import {
   errorCode,
   errorText,
+  fetchCompare,
   fetchReport,
   type Bucket,
+  type CompareDocument,
   type HassLike,
   type ReportDocument,
   type Row,
@@ -66,11 +70,16 @@ function icon(path: string): TemplateResult {
 
 export class EnergyCostStatsCard extends LitElement {
   static override properties = {
-    hass: { attribute: false },
+    // Entity-state-only updates must not re-render (they close an open <select>).
+    hass: { attribute: false, hasChanged: hassChanged },
     _config: { state: true },
     _period: { state: true },
     _groupingChoice: { state: true },
     _report: { state: true },
+    _compare: { state: true },
+    _compareError: { state: true },
+    _compareLoading: { state: true },
+    _compareHidden: { state: true },
     _error: { state: true },
     _loading: { state: true },
     _customOpen: { state: true },
@@ -84,6 +93,12 @@ export class EnergyCostStatsCard extends LitElement {
   private _period?: Period;
   private _groupingChoice: GroupingChoice = "auto";
   private _report?: ReportDocument;
+  private _compare?: CompareDocument;
+  private _compareError?: string;
+  /** A compare request is in flight (the shown comparison may be of a previous period). */
+  private _compareLoading = false;
+  /** The integration predates `compare`: the section is not shown. */
+  private _compareHidden = false;
   private _error?: string;
   private _loading = false;
   private _customOpen = false;
@@ -91,6 +106,7 @@ export class EnergyCostStatsCard extends LitElement {
   private _customEnd = "";
   private _breakdownEntity = "";
   private _requestSeq = 0;
+  private _compareSeq = 0;
   /** The integration's time zone, learned from the first report (kept on errors). */
   private _reportTimeZone?: string;
   /** The last request was cut at the current hour: refresh until it is not. */
@@ -124,11 +140,18 @@ export class EnergyCostStatsCard extends LitElement {
       // Config edited in the dashboard editor: start over from the configured period.
       this._period = undefined;
       this._report = undefined;
+      this._compare = undefined;
     }
   }
 
   getCardSize(): number {
-    return 3 + (this._report?.devices.length ?? 2);
+    const compared = this._compare && !this._compareHidden ? this._compare.tariffs.length + 3 : 0;
+    return 3 + (this._report?.devices.length ?? 2) + compared;
+  }
+
+  /** Sections views: take the section's full width (a user `grid_options` still wins). */
+  getGridOptions(): { columns: number | "full"; min_columns: number } {
+    return { columns: "full", min_columns: 6 };
   }
 
   private get _strings(): Strings {
@@ -180,16 +203,66 @@ export class EnergyCostStatsCard extends LitElement {
   protected override updated(changed: PropertyValues): void {
     super.updated(changed);
     if (!this.hass || !this._period) return;
-    if (
-      changed.has("_period") ||
-      changed.has("_groupingChoice") ||
-      (changed.has("hass") && changed.get("hass") === undefined)
-    ) {
+    if (changed.has("_period") || (changed.has("hass") && changed.get("hass") === undefined)) {
       void this._load();
+    } else if (changed.has("_groupingChoice")) {
+      // The comparison has no grouping: only the report is re-requested.
+      void this._loadReport();
     }
   }
 
-  private async _load(): Promise<void> {
+  /** Report and comparison for the same period. */
+  private _load(): Promise<void> {
+    void this._loadCompare();
+    return this._loadReport();
+  }
+
+  private async _loadCompare(): Promise<void> {
+    const hass = this.hass;
+    const period = this._period;
+    if (!hass || !period) return;
+    const seq = ++this._compareSeq;
+    this._compareLoading = true;
+    try {
+      const compare = await fetchCompare(hass, {
+        period,
+        entities: this._config?.entities,
+        timeZone: this._timeZone,
+      });
+      if (seq !== this._compareSeq) return;
+      this._compare = compare;
+      this._compareError = undefined;
+      this._compareHidden = false;
+    } catch (err) {
+      if (seq !== this._compareSeq) return;
+      this._compare = undefined;
+      const code = errorCode(err);
+      if (code === "unknown_command") {
+        this._compareHidden = true;
+        this._compareError = undefined;
+        return;
+      }
+      this._compareHidden = false;
+      this._compareError = this._strings.t("compare.error", { message: this._errorMessage(err) });
+    } finally {
+      if (seq === this._compareSeq) this._compareLoading = false;
+    }
+  }
+
+  private _errorMessage(err: unknown): string {
+    const code = errorCode(err);
+    const known: Record<string, StringKey> = {
+      not_loaded: "error.not_loaded",
+      invalid_period: "error.invalid_period",
+      period_too_long: "error.period_too_long",
+      unknown_entity: "error.unknown_entity",
+      unknown_tariff: "error.unknown_tariff",
+    };
+    const key = code ? known[code] : undefined;
+    return key ? this._strings.t(key) : errorText(err);
+  }
+
+  private async _loadReport(): Promise<void> {
     const hass = this.hass;
     const period = this._period;
     if (!hass || !period) return;
@@ -414,14 +487,21 @@ export class EnergyCostStatsCard extends LitElement {
         <table class="devices">
           ${this._renderHead(s, report, s.t("device"), totals)}
           <tbody>
-            ${totals.rows.map((row) => {
+            ${this._deviceRows(report).map(({ row, depth }) => {
               const device = row.entity_id ? names.get(row.entity_id) : undefined;
               const label = device?.name ?? row.entity_id ?? "";
               const statistics =
                 device && device.statistics !== "ok"
                   ? s.t(`statistics.${device.statistics}` as StringKey)
                   : "";
-              return this._renderRow(s, report, row, label, statistics);
+              const upstream = device?.upstream ? names.get(device.upstream) : undefined;
+              return this._renderRow(s, report, row, label, statistics, {
+                depth,
+                title:
+                  depth > 0 && upstream
+                    ? `${label} — ${s.t("nested.title", { name: upstream.name })}`
+                    : label,
+              });
             })}
           </tbody>
           <tfoot>
@@ -429,9 +509,109 @@ export class EnergyCostStatsCard extends LitElement {
           </tfoot>
         </table>
       </div>
+      ${report.devices.some((d) => d.upstream && names.has(d.upstream))
+        ? html`<div class="note nested-note">${s.t("nested.note")}</div>`
+        : nothing}
+      ${this._renderComparison(s, report)}
       ${report.grouping !== "total" ? this._renderBreakdown(s, report) : nothing}
       ${report.issues.length > 0 ? this._renderIssues(s, report, names) : nothing}
     `;
+  }
+
+  /** Rows in display order: nested devices directly after their upstream. */
+  private _deviceRows(report: ReportDocument): { row: Row; depth: number }[] {
+    const byId = new Map(report.totals.rows.map((r) => [r.entity_id, r]));
+    const out: { row: Row; depth: number }[] = [];
+    const used = new Set<Row>();
+    for (const { entity_id, depth } of orderNested(report.devices)) {
+      const row = byId.get(entity_id);
+      if (row && !used.has(row)) {
+        used.add(row);
+        out.push({ row, depth });
+      }
+    }
+    for (const row of report.totals.rows) {
+      if (!used.has(row)) out.push({ row, depth: 0 });
+    }
+    return out;
+  }
+
+  private _renderComparison(s: Strings, report: ReportDocument): TemplateResult | typeof nothing {
+    if (this._compareHidden) return nothing;
+    const compare = this._compare;
+    const error = this._compareError;
+    if (!compare && !error) return nothing;
+    const currency = report.currency;
+    let body: TemplateResult | typeof nothing = nothing;
+    if (error) {
+      body = html`<div class="error" role="alert">${error}</div>`;
+    } else if (compare && compare.tariffs.length === 0) {
+      body = html`<div class="note">${s.t("compare.empty")}</div>`;
+    } else if (compare) {
+      const actual = compare.actual;
+      const actualTotal = actual.totals.total;
+      const plans = actual.plans.map((p) => p.name).join(" → ");
+      body = html`<div class="table-wrap">
+        <table class="comparison">
+          <thead>
+            <tr>
+              <th rowspan="2" class="name">${s.t("compare.tariff")}</th>
+              <th rowspan="2" class="num">${s.t("cost")}</th>
+              <th colspan="2" class="zone group-start">${s.t("compare.difference")}</th>
+              <th rowspan="2" class="num group-start">${s.t("avg_price")}</th>
+            </tr>
+            <tr>
+              <th class="num group-start">${currency ?? ""}</th>
+              <th class="num">%</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row" class="name" title=${s.t("compare.actual")}>
+                <span>${s.t("compare.actual")}</span>
+                ${plans ? html`<span class="sub">${plans}</span>` : nothing}
+              </th>
+              <td class="num strong">${s.money(actualTotal.cost, currency)}</td>
+              <td class="num group-start">—</td>
+              <td class="num">—</td>
+              <td class="num group-start">${s.avgPrice(actualTotal.cost, actualTotal.kwh)}</td>
+            </tr>
+            ${compare.tariffs.map((tariff) => {
+              const total = tariff.report.totals.total;
+              const diff = difference(actualTotal.cost, total.cost);
+              const own = tariff.report.unpriced_hours;
+              const hours = own || actual.unpriced_hours;
+              const hint = s.t(own > 0 ? "compare.unpriced" : "compare.unpriced_actual", { hours });
+              return html`<tr>
+                <th scope="row" class="name" title=${tariff.name}>
+                  <span>${tariff.name}</span>
+                  ${hours > 0
+                    ? html`<span class="badge partial" title=${hint}
+                        >!</span
+                      >`
+                    : nothing}
+                </th>
+                <td class="num strong">${s.money(total.cost, currency)}</td>
+                <td class="num group-start">${s.signedMoney(diff.amount, currency)}</td>
+                <td class="num">${s.signedPercent(diff.percent)}</td>
+                <td class="num group-start">${s.avgPrice(total.cost, total.kwh)}</td>
+              </tr>`;
+            })}
+          </tbody>
+        </table>
+      </div>`;
+    }
+    const loading = this._compareLoading;
+    return html`<section
+      class="comparison ${loading ? "loading" : ""}"
+      aria-busy=${loading ? "true" : "false"}
+    >
+      <h3>
+        ${s.t("compare.title")}
+        ${loading ? html`<span class="loading" role="status">${s.t("loading")}</span>` : nothing}
+      </h3>
+      ${body}
+    </section>`;
   }
 
   private _renderHead(
@@ -447,19 +627,21 @@ export class EnergyCostStatsCard extends LitElement {
           <th rowspan="2" class="name">${firstColumn}</th>
           ${report.zones.map((zone, index) => {
             const price = totals.total.zones[index]?.price ?? null;
-            return html`<th colspan="2" class="zone">
+            return html`<th colspan="2" class="zone group-start">
               ${zone.name}${price !== null
                 ? html`<span class="price">${s.money(price, currency)}</span>`
                 : nothing}
             </th>`;
           })}
-          <th colspan="3" class="zone sum">${s.t("total")}</th>
+          <th colspan="3" class="zone sum group-start">${s.t("total")}</th>
         </tr>
         <tr>
           ${report.zones.map(
-            () => html`<th class="num">${s.t("kwh")}</th><th class="num">${s.t("cost")}</th>`,
+            () =>
+              html`<th class="num group-start">${s.t("kwh")}</th>
+                <th class="num">${s.t("cost")}</th>`,
           )}
-          <th class="num">${s.t("kwh")}</th>
+          <th class="num group-start">${s.t("kwh")}</th>
           <th class="num">${s.t("cost")}</th>
           <th class="num">${s.t("avg_price")}</th>
         </tr>
@@ -473,6 +655,7 @@ export class EnergyCostStatsCard extends LitElement {
     row: Row,
     label: string,
     note: string,
+    nested: { depth: number; title: string } = { depth: 0, title: label },
   ): TemplateResult {
     const currency = report.currency;
     const c = row.coverage;
@@ -484,9 +667,14 @@ export class EnergyCostStatsCard extends LitElement {
       expected: c.expected,
     });
     return html`
-      <tr class="status-${row.status}">
-        <th scope="row" class="name">
-          <span>${label}</span>
+      <tr class="status-${row.status} ${nested.depth > 0 ? "nested" : ""}">
+        <th
+          scope="row"
+          class="name"
+          title=${nested.title}
+          style=${nested.depth > 0 ? `--depth: ${nested.depth}` : nothing}
+        >
+          <span>${nested.depth > 0 ? "↳ " : ""}${label}</span>
           ${row.status !== "complete"
             ? html`<span
                 class="badge ${row.status}"
@@ -498,10 +686,10 @@ export class EnergyCostStatsCard extends LitElement {
         </th>
         ${row.zones.map(
           (cell) =>
-            html`<td class="num">${s.number(cell.kwh, 2)}</td>
+            html`<td class="num group-start">${s.number(cell.kwh, 2)}</td>
               <td class="num">${s.money(cell.cost, currency)}</td>`,
         )}
-        <td class="num strong">${s.number(row.kwh, 2)}</td>
+        <td class="num strong group-start">${s.number(row.kwh, 2)}</td>
         <td class="num strong">${s.money(row.cost, currency)}</td>
         <td class="num">${s.avgPrice(row.cost, row.kwh)}</td>
       </tr>
@@ -702,6 +890,23 @@ export class EnergyCostStatsCard extends LitElement {
     }
     .table-wrap {
       overflow-x: auto;
+      container-type: inline-size;
+    }
+    section.comparison {
+      margin-top: 12px;
+    }
+    section.comparison.loading .table-wrap {
+      opacity: 0.5;
+    }
+    section.comparison h3 .loading {
+      margin-inline-start: 8px;
+      font-size: 0.85rem;
+      font-weight: 400;
+    }
+    section.comparison h3 {
+      margin: 0 0 4px;
+      font-size: 1rem;
+      font-weight: 500;
     }
     table {
       border-collapse: collapse;
@@ -726,11 +931,29 @@ export class EnergyCostStatsCard extends LitElement {
       font-size: 0.8em;
       font-weight: 400;
     }
+    .group-start {
+      border-inline-start: 1px solid var(--divider-color);
+    }
     th.name {
       text-align: start;
       position: sticky;
       left: 0;
       background: var(--card-background-color, var(--ha-card-background, white));
+      /* A shadow, not a border: borders of a sticky cell scroll away in collapsed tables. */
+      box-shadow: inset -1px 0 0 var(--divider-color);
+    }
+    tbody th.name,
+    tfoot th.name {
+      white-space: normal;
+      overflow-wrap: anywhere;
+      min-width: 6.5em;
+      max-width: max(6.5em, 35cqi);
+    }
+    tr.nested th.name {
+      padding-inline-start: calc(6px + var(--depth, 0) * 1.2em);
+    }
+    .nested-note {
+      font-size: 0.85em;
     }
     tbody th.name {
       font-weight: 400;

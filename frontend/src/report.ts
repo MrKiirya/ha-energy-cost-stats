@@ -61,7 +61,7 @@ export interface ReportDocument {
   grouping: Grouping;
   zones: { key: string; name: string }[];
   plans: { valid_from: string; name: string }[];
-  devices: { entity_id: string; name: string; statistics: string }[];
+  devices: { entity_id: string; name: string; statistics: string; upstream?: string | null }[];
   buckets: Bucket[];
   totals: Bucket;
   unpriced_hours: number;
@@ -69,6 +69,13 @@ export interface ReportDocument {
 }
 
 export const WS_TYPE_REPORT = "energy_cost_stats/report";
+export const WS_TYPE_COMPARE = "energy_cost_stats/compare";
+
+/** `energy_cost_stats/compare` response (SPEC §4.2): documents are grouped as `total`. */
+export interface CompareDocument {
+  actual: ReportDocument;
+  tariffs: { id: string; name: string; report: ReportDocument }[];
+}
 
 /** The minimal slice of the `hass` object the card uses. */
 export interface HassLike {
@@ -87,17 +94,38 @@ export interface ReportQuery {
   now?: Date;
 }
 
-export function reportMessage(query: ReportQuery): Record<string, unknown> {
+function periodMessage(
+  type: string,
+  query: Omit<ReportQuery, "grouping">,
+): Record<string, unknown> {
   const msg: Record<string, unknown> = {
-    type: WS_TYPE_REPORT,
+    type,
     start: query.period.start,
     end: requestEnd(query.period, query.timeZone, query.now),
-    grouping: query.grouping,
   };
   if (query.entities && query.entities.length > 0) {
     msg.entities = query.entities;
   }
   return msg;
+}
+
+export function reportMessage(query: ReportQuery): Record<string, unknown> {
+  const { type, start, end, entities } = periodMessage(WS_TYPE_REPORT, query);
+  const msg: Record<string, unknown> = { type, start, end, grouping: query.grouping };
+  if (entities !== undefined) msg.entities = entities;
+  return msg;
+}
+
+/** Same period and entities as the report; the tariffs are the integration's own list. */
+export function compareMessage(query: Omit<ReportQuery, "grouping">): Record<string, unknown> {
+  return periodMessage(WS_TYPE_COMPARE, query);
+}
+
+export function fetchCompare(
+  hass: HassLike,
+  query: Omit<ReportQuery, "grouping">,
+): Promise<CompareDocument> {
+  return hass.callWS<CompareDocument>(compareMessage(query));
 }
 
 export function fetchReport(hass: HassLike, query: ReportQuery): Promise<ReportDocument> {
