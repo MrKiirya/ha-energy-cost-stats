@@ -85,7 +85,7 @@ three-zone residential tariffs.
     (list, or `applied: <id>` = from that tariff's first version), `compare`. Unknown keys are errors. An empty
     block is valid (all defaults, no tariffs).
   - **Applying.** At startup (`async_setup`) and by the admin action `energy_cost_stats.reload` (no fields; also
-    listed in Developer tools, YAML; registered even without a block, so a block added later is picked up without a
+    listed in Settings → Tools → YAML (Developer tools → YAML in older releases); registered even without a block, so a block added later is picked up without a
     restart; it re-reads `configuration.yaml` with `async_integration_yaml_config`). A new block with no entry
     starts an `import` config flow (`async_step_import` creates the entry with the options); an existing entry is
     synced in `async_setup_entry` before its options are parsed (and reloaded after a reload action). The first
@@ -433,6 +433,11 @@ the repo as is, with no build step) and CI fails when it does not match the sour
   every `hass` to the card but re-renders only under the `hass` update gate.
 - **Language.** English and Russian strings in the card (`hass.locale.language`); numbers, money (HA currency) and
   dates via `Intl` in that locale.
+- **Integration language.** The integration's own texts (config and options flows, tariff subentry flows, errors,
+  aborts, selector options, services, exceptions and the repair issue) are translated into English and Russian.
+  `strings.json` is the source; `translations/en.json` mirrors it exactly and `translations/ru.json` carries the
+  Russian text. Unit tests keep every translation file in step with `strings.json` (same keys, same
+  `{placeholder}` set per string, hassfest value rules).
 
 ### 4.2 Tariff comparison (`energy_cost_stats/compare`)
 Read-only websocket command (no admin rights). Fields: `start`, `end` (as in §2), optional `entities` (as in §2) and

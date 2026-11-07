@@ -12,7 +12,7 @@ retroactively, from Home Assistant's existing long-term statistics, without crea
 
 Everything can also be configured in `configuration.yaml` under `energy_cost_stats:` (same shape as the UI edits,
 see [docs/CONFIG-DESIGN.md](docs/CONFIG-DESIGN.md)). The block then replaces the UI configuration; apply changes
-without a restart with the action `energy_cost_stats.reload` (Developer tools, YAML). The options menu has
+without a restart with the action `energy_cost_stats.reload` (Settings → Tools → YAML; Developer tools → YAML in older releases). The options menu has
 **Export to YAML** to start from the current configuration.
 
 For editor validation and completion keep the block in its own file and add the schema modeline:
