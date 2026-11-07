@@ -376,7 +376,10 @@ the repo as is, with no build step) and CI fails when it does not match the sour
   extra module does this by itself.
 - **Config.** `title`, `entities` (subset of the selected sensors; default all), `period` (initial preset,
   default `this_month`), `grouping` (`auto` / `hour` / `day` / `week` / `month` for the "by period" table,
-  default `auto`), `show_breakdown` (bool). No visual editor yet.
+  default `auto`), `show_breakdown` (bool), `sort` (`name`, `total`, `avg_price` or a zone key; default `total`)
+  and `sort_direction` (`asc` / `desc`; default: the key's natural direction, see "Sorting"). A `sort` that is not
+  a string or an invalid `sort_direction` is a configuration error; a zone key missing from the current report
+  falls back to `total` / `desc` without an error. No visual editor yet.
 - **Period picker** (modelled on the Energy dashboard's period selector). A period is a closed range of local
   dates. Presets: today, yesterday, this/last week, this/last month, this quarter, this year, last 7 / 30 days,
   last 12 months, or a custom range. Arrows move by the period's own size: a range of whole calendar months
@@ -393,8 +396,20 @@ the repo as is, with no build step) and CI fails when it does not match the sour
 - **Table.** One row per device with kWh and cost per zone (zone header shows the period price when it is a single
   price), total kWh, total cost and the average price (`cost / kWh`, display only), plus the total row. `null`
   shows as "—", never 0. Rows that are not `complete` get a badge (≈ estimated, ! partial/missing) with the
-  coverage in the tooltip. A collapsible "by period" table shows the buckets for all devices or one device.
+  coverage in the tooltip. Header: Device and Avg. price are two-row-tall columns; Total (kWh + cost) sits between
+  the zones and Avg. price, which has its own separator. All top-row header cells are top-aligned. A collapsible
+  "by period" table shows the buckets for all devices or one device.
   Notes: no tariff plan, unpriced hours; a collapsible "data quality" list shows the issues.
+- **Sorting** (task 025). In the device table every cell of the top header row is a button: Device (by name),
+  each zone (by that zone's cost, looked up by zone `key`), Total (by total cost) and Avg. price (by `cost / kWh`).
+  The second header row (kWh / cost) is not clickable. Sorting is by money only, never by kWh. Default: total
+  cost, descending. A first click sorts names ascending and money descending; a click on the active header
+  reverses the direction. The active header carries `aria-sort` and a ▲ / ▼ indicator. Unpriced values (`null`,
+  or no kWh for the average price) sort last in both directions; ties are broken by name, then entity id. Nested
+  devices stay directly under their upstream and are sorted among their siblings; the total row stays last.
+  Sorting is client-side (no request). The last click is remembered in `localStorage` per dashboard path, title,
+  entities and configured `sort` / `sort_direction`, so a changed YAML default applies again; storage errors are
+  ignored. The "by period" and comparison tables are not sortable.
 - **Tariff comparison** (task 022). A plain "Tariff comparison" block after the device table and before "by
   period": a first "Actual" row (subtitle: the actual schedule's plan names joined with " → ") and one row per
   compared tariff, in the integration's order: cost, difference (compared − actual, money and percent of actual;
@@ -410,8 +425,15 @@ the repo as is, with no build step) and CI fails when it does not match the sour
   `getCardSize`. Each zone and the Total group start with a `group-start` cell (left separator on every row) under
   a centred zone header; the sticky name column has an end shadow. Name cells wrap (`overflow-wrap: anywhere`, at
   most about a third of the card width) and carry the full name as `title`; numbers never wrap.
+  **Sticky parts.** The period controls (picker and custom range) stay below Home Assistant's top bar while the
+  page scrolls (`position: sticky`; offset `--energy-cost-stats-sticky-top`, default header height plus the safe
+  area inset; override it in themes, card-mod or kiosk setups without a header). Tables sit in a scroll box capped
+  at the visible height (`max-height` from the viewport, the offset and the measured controls height), so their
+  two header rows stay visible while the rows scroll; the top-left cell sticks in both directions. A long table
+  therefore scrolls inside the card. A page-sticky header synchronised with the horizontal scroll is not
+  implemented.
 - **Nested devices.** A device with `devices[].upstream` in the report is shown directly after its upstream
-  (depth-first, report order among siblings), indented, prefixed with "↳", and a note explains that its energy is
+  (depth-first, siblings sorted by the active sort, see "Sorting"), indented, prefixed with "↳", and a note explains that its energy is
   counted in the total only for hours where the upstream has no data. The "by period" device list keeps the
   report order.
 - **`hass` update gate.** Home Assistant replaces `hass` on every entity state change. The property's `hasChanged`
@@ -430,7 +452,8 @@ the repo as is, with no build step) and CI fails when it does not match the sour
   integration nothing is registered. If the URL path is taken (e.g. by a `panel_custom` entry in YAML) a warning is
   logged, the entry still loads and the foreign panel is left alone. The element also reads an optional
   `panel.config.card` (card options), which the integration does not send yet. Like the card, the panel forwards
-  every `hass` to the card but re-renders only under the `hass` update gate.
+  every `hass` to the card but re-renders only under the `hass` update gate. The panel's top bar is sticky and
+  the panel sets `--energy-cost-stats-sticky-top` to the bar height, so the card's controls stick right under it.
 - **Language.** English and Russian strings in the card (`hass.locale.language`); numbers, money (HA currency) and
   dates via `Intl` in that locale.
 - **Integration language.** The integration's own texts (config and options flows, tariff subentry flows, errors,

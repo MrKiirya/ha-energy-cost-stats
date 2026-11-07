@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "../src/index";
-import type { EnergyCostStatsCard } from "../src/card";
+import { EnergyCostStatsCard } from "../src/card";
 import type { CompareDocument, HassLike, ReportDocument } from "../src/report";
 import { compareDoc, report, row, totalDoc } from "./fixtures";
 
@@ -88,10 +88,12 @@ beforeEach(() => {
   vi.useFakeTimers({ toFake: ["Date"] });
   // Friday 2026-11-06.
   vi.setSystemTime(new Date("2026-11-06T12:00:00Z"));
+  localStorage.clear();
 });
 
 afterEach(() => {
   vi.useRealTimers();
+  vi.unstubAllGlobals();
   document.body.innerHTML = "";
 });
 
@@ -656,11 +658,16 @@ describe("layout", () => {
     expect(zones[0]!.getAttribute("colspan")).toBe("2");
     expect(zones[1]!.getAttribute("colspan")).toBe("2");
     expect(head[1]!.querySelectorAll("th.group-start")).toHaveLength(3);
+    expect(zones[2]!.getAttribute("colspan")).toBe("2");
+    const avg = head[0]!.querySelector("th.avg")!;
+    expect(avg.getAttribute("rowspan")).toBe("2");
+    expect(avg.classList.contains("group-start")).toBe(true);
+    expect(avg.previousElementSibling).toBe(zones[2]);
     for (const tr of [...bodyRows(card), card.shadowRoot!.querySelector("table.devices tfoot tr")!]) {
       const cells = [...tr.querySelectorAll("td")];
-      // kWh, cost | kWh, cost | kWh, cost, avg. price
+      // kWh, cost | kWh, cost | kWh, cost | avg. price
       expect(cells.map((c) => c.classList.contains("group-start"))).toEqual([
-        true, false, true, false, true, false, false,
+        true, false, true, false, true, false, true,
       ]);
     }
   });
@@ -689,7 +696,8 @@ describe("nested devices", () => {
   }
 
   it("nested rows follow their upstream, indented, with a note", async () => {
-    const { card } = await mount({}, makeHass(async () => nestedReport()));
+    // Name order: roots A→Z, the child directly under its upstream.
+    const { card } = await mount({ sort: "name" }, makeHass(async () => nestedReport()));
     const rows = bodyRows(card);
     const names = rows.map((tr) => tr.querySelector("th.name")!.textContent!.replace(/\s+/g, " ").trim());
     expect(names[0]).toBe("Other");
@@ -796,5 +804,201 @@ describe("hass updates", () => {
     }
     expect(q<HTMLSelectElement>(card, "select.grouping")).toBe(select);
     expect(select.value).toBe("week");
+  });
+});
+
+describe("sorting", () => {
+  function sortReport(): ReportDocument {
+    const doc = report();
+    doc.devices = [
+      { entity_id: "sensor.p1", name: "Delta", statistics: "ok", upstream: null },
+      { entity_id: "sensor.p2", name: "Alpha", statistics: "ok", upstream: null },
+      { entity_id: "sensor.p3", name: "Charlie", statistics: "ok", upstream: null },
+      { entity_id: "sensor.p4", name: "Bravo", statistics: "ok", upstream: null },
+    ];
+    doc.totals.rows = [
+      row("sensor.p1", ["10.000", "10.00"], ["1.000", "1.00"]),
+      row("sensor.p2", ["1.000", "1.00"], ["1.000", "20.00"]),
+      row("sensor.p3", ["1.000", null], ["1.000", null]),
+      row("sensor.p4", ["4.000", "5.00"], ["1.000", "5.00"]),
+    ];
+    return doc;
+  }
+  const mountSorted = (config: Record<string, unknown> = {}, doc = sortReport()) =>
+    mount(config, makeHass(async () => doc));
+  const names = (card: EnergyCostStatsCard) =>
+    bodyRows(card).map((tr) => tr.querySelector("th.name span")!.textContent!.replace(/[↳\s]+/g, " ").trim());
+  const btn = (key: string) => `table.devices thead button.sort[data-sort="${key}"]`;
+  const th = (card: EnergyCostStatsCard, key: string) => q(card, btn(key)).closest("th")!;
+  const ariaSorted = (card: EnergyCostStatsCard) =>
+    [...card.shadowRoot!.querySelectorAll("table.devices thead th[aria-sort]")].map(
+      (el) => el.getAttribute("aria-sort"),
+    );
+
+  it("defaults to total cost descending, unpriced last", async () => {
+    const { card } = await mountSorted();
+    expect(names(card)).toEqual(["Alpha", "Delta", "Bravo", "Charlie"]);
+    expect(th(card, "total").getAttribute("aria-sort")).toBe("descending");
+    expect(th(card, "total").textContent).toContain("▼");
+    expect(ariaSorted(card)).toEqual(["descending"]);
+    expect(card.shadowRoot!.querySelectorAll(".sort-indicator")).toHaveLength(1);
+    const last = card.shadowRoot!.querySelector("table.devices tfoot tr")!;
+    expect(last.textContent).toContain("Total");
+  });
+
+  it("has all sort buttons in the top row and none in the second", async () => {
+    const { card } = await mountSorted();
+    const rows = card.shadowRoot!.querySelectorAll("table.devices thead tr");
+    expect([...rows[0]!.querySelectorAll("button.sort")].map((b) => b.getAttribute("data-sort"))).toEqual(
+      ["name", "t1", "t2", "total", "avg_price"],
+    );
+    expect(rows[1]!.querySelectorAll("button")).toHaveLength(0);
+    expect(th(card, "name").getAttribute("rowspan")).toBe("2");
+    expect(th(card, "avg_price").getAttribute("rowspan")).toBe("2");
+    expect(th(card, "total").getAttribute("colspan")).toBe("2");
+    expect(th(card, "avg_price").previousElementSibling).toBe(th(card, "total"));
+    const css = EnergyCostStatsCard.styles.toString();
+    expect(css).toMatch(/thead tr:first-child th\s*{[^}]*vertical-align: top/);
+  });
+
+  it("sorts by a zone and toggles, without a new request", async () => {
+    const { card, hass } = await mountSorted();
+    const before = hass.calls.length;
+    await click(card, btn("t2"));
+    expect(names(card)).toEqual(["Alpha", "Bravo", "Delta", "Charlie"]);
+    expect(th(card, "t2").getAttribute("aria-sort")).toBe("descending");
+    expect(th(card, "t2").textContent).toContain("▼");
+    await click(card, btn("t2"));
+    expect(names(card)).toEqual(["Delta", "Bravo", "Alpha", "Charlie"]);
+    expect(th(card, "t2").getAttribute("aria-sort")).toBe("ascending");
+    expect(th(card, "t2").textContent).toContain("▲");
+    expect(ariaSorted(card)).toEqual(["ascending"]);
+    expect(hass.calls.length).toBe(before);
+  });
+
+  it("sorts by average price", async () => {
+    const { card } = await mountSorted();
+    await click(card, btn("avg_price"));
+    expect(names(card)).toEqual(["Alpha", "Bravo", "Delta", "Charlie"]);
+    await click(card, btn("avg_price"));
+    expect(names(card)).toEqual(["Delta", "Bravo", "Alpha", "Charlie"]);
+    expect(th(card, "avg_price").getAttribute("aria-sort")).toBe("ascending");
+  });
+
+  it("sorts names ascending first, then descending", async () => {
+    const { card } = await mountSorted();
+    await click(card, btn("name"));
+    expect(names(card)).toEqual(["Alpha", "Bravo", "Charlie", "Delta"]);
+    expect(th(card, "name").getAttribute("aria-sort")).toBe("ascending");
+    await click(card, btn("name"));
+    expect(names(card)).toEqual(["Delta", "Charlie", "Bravo", "Alpha"]);
+  });
+
+  it("keeps nested devices under their upstream", async () => {
+    const doc = report();
+    doc.devices = [
+      { entity_id: "sensor.parent", name: "Parent", statistics: "ok", upstream: null },
+      { entity_id: "sensor.child", name: "Child", statistics: "ok", upstream: "sensor.parent" },
+      { entity_id: "sensor.other", name: "Other", statistics: "ok", upstream: null },
+    ];
+    doc.totals.rows = [
+      row("sensor.parent", ["1.000", "5.00"], ["0.000", "0.00"]),
+      row("sensor.child", ["1.000", "50.00"], ["0.000", "0.00"]),
+      row("sensor.other", ["1.000", "10.00"], ["0.000", "0.00"]),
+    ];
+    const { card } = await mountSorted({}, doc);
+    expect(names(card)).toEqual(["Other", "Parent", "Child"]);
+    expect(bodyRows(card)[2]!.classList.contains("nested")).toBe(true);
+    await click(card, btn("total"));
+    expect(names(card)).toEqual(["Parent", "Child", "Other"]);
+  });
+
+  it("applies the YAML default", async () => {
+    let { card } = await mountSorted({ sort: "name" });
+    expect(names(card)).toEqual(["Alpha", "Bravo", "Charlie", "Delta"]);
+    document.body.innerHTML = "";
+    ({ card } = await mountSorted({ sort: "t1", sort_direction: "asc" }));
+    expect(names(card)).toEqual(["Alpha", "Bravo", "Delta", "Charlie"]);
+    document.body.innerHTML = "";
+    ({ card } = await mountSorted({ sort: "t9" }));
+    expect(names(card)).toEqual(["Alpha", "Delta", "Bravo", "Charlie"]);
+    expect(card.shadowRoot!.querySelector(".error")).toBeNull();
+  });
+
+  it("rejects invalid sort options", () => {
+    const card = document.createElement("energy-cost-stats-card") as EnergyCostStatsCard;
+    expect(() => card.setConfig({ type: "x", sort: "" })).toThrow();
+    expect(() => card.setConfig({ type: "x", sort: 3 } as never)).toThrow();
+    expect(() => card.setConfig({ type: "x", sort_direction: "down" } as never)).toThrow();
+  });
+
+  it("remembers the click per card configuration", async () => {
+    const { card } = await mountSorted();
+    await click(card, btn("name"));
+    document.body.innerHTML = "";
+    const again = await mountSorted();
+    expect(names(again.card)).toEqual(["Alpha", "Bravo", "Charlie", "Delta"]);
+    document.body.innerHTML = "";
+    const other = await mountSorted({ sort: "t1" });
+    expect(names(other.card)).toEqual(["Delta", "Bravo", "Alpha", "Charlie"]);
+  });
+
+  it("works without localStorage", async () => {
+    const boom = () => {
+      throw new Error("denied");
+    };
+    vi.stubGlobal("localStorage", { getItem: boom, setItem: boom, removeItem: boom });
+    const { card } = await mountSorted();
+    await click(card, btn("name"));
+    expect(names(card)).toEqual(["Alpha", "Bravo", "Charlie", "Delta"]);
+    expect(card.shadowRoot!.querySelector(".error")).toBeNull();
+  });
+
+  it("only the device table is sortable", async () => {
+    const { card } = await mountSorted({ show_breakdown: true });
+    expect(card.shadowRoot!.querySelector("table.buckets")).not.toBeNull();
+    expect(card.shadowRoot!.querySelector("table.comparison")).not.toBeNull();
+    expect(card.shadowRoot!.querySelectorAll("table.devices button.sort").length).toBeGreaterThan(0);
+    expect(card.shadowRoot!.querySelectorAll("table.buckets button.sort")).toHaveLength(0);
+    expect(card.shadowRoot!.querySelectorAll("table.comparison button.sort")).toHaveLength(0);
+    expect(card.shadowRoot!.querySelectorAll("table.buckets thead [aria-sort]")).toHaveLength(0);
+  });
+
+  it("speaks Russian", async () => {
+    const { card } = await mount({}, makeHass(async () => sortReport(), "ru"));
+    expect(q(card, btn("t1")).getAttribute("title")).toBe(
+      "Сортировать по: стоимость Day, по убыванию",
+    );
+    expect(q(card, btn("name")).getAttribute("title")).toContain("по возрастанию");
+  });
+
+  it("describes what a click does in English", async () => {
+    const { card } = await mountSorted();
+    expect(q(card, btn("t1")).getAttribute("title")).toBe("Sort by Day cost, descending");
+    expect(q(card, btn("total")).getAttribute("title")).toBe("Sort by total cost, ascending");
+  });
+});
+
+describe("sticky", () => {
+  it("wraps the period controls, not the title", async () => {
+    const { card } = await mount();
+    const controls = q(card, ".controls");
+    expect(controls.querySelector(".picker")).not.toBeNull();
+    expect(controls.querySelector(".header")).toBeNull();
+    expect(q(card, ".header").closest(".controls")).toBeNull();
+    await click(card, "button.label");
+    expect(q(card, ".controls").querySelector(".custom")).not.toBeNull();
+    const css = EnergyCostStatsCard.styles.toString();
+    expect(css).toMatch(/\.controls\s*{[^}]*position: sticky/);
+    expect(css).toMatch(/\.controls\s*{[^}]*z-index: 3/);
+    expect(css).toContain("--energy-cost-stats-sticky-top");
+    expect(css).toMatch(/thead\s*{[^}]*position: sticky/);
+    expect(css).toMatch(/\.table-wrap\s*{[^}]*max-height/);
+  });
+
+  it("renders without ResizeObserver", async () => {
+    vi.stubGlobal("ResizeObserver", undefined);
+    const { card } = await mount();
+    expect(card.shadowRoot!.querySelector("table.devices")).not.toBeNull();
   });
 });
