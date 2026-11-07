@@ -395,6 +395,29 @@ the repo as is, with no build step) and CI fails when it does not match the sour
   shows as "—", never 0. Rows that are not `complete` get a badge (≈ estimated, ! partial/missing) with the
   coverage in the tooltip. A collapsible "by period" table shows the buckets for all devices or one device.
   Notes: no tariff plan, unpriced hours; a collapsible "data quality" list shows the issues.
+- **Tariff comparison** (task 022). A plain "Tariff comparison" block after the device table and before "by
+  period": a first "Actual" row (subtitle: the actual schedule's plan names joined with " → ") and one row per
+  compared tariff, in the integration's order: cost, difference (compared − actual, money and percent of actual;
+  positive = the compared tariff would have cost more; "—" when either cost is `null`, percent "—" when actual is
+  0) and average price. Data: a second request, `energy_cost_stats/compare`, with the same `start` / `end` /
+  `entities` as the report and no `tariffs` (the list is the integration's `compare` setting; the card has no
+  `compare` option). It is re-sent with the report except on a grouping change; stale responses are dropped.
+  A tariff with unpriced hours gets a warning badge. An empty list shows a hint; `unknown_command` (older
+  integration) hides the section; any other compare error is shown inside the section only.
+- **Layout.** `getGridOptions()` returns `{columns: "full", min_columns: 6}` (no `rows`: height follows the
+  content), so in sections views the card spans its section by default; a user `grid_options` overrides it. A card
+  cannot be wider than its section: wider layouts are the section's `column_span`. Masonry and panel views use
+  `getCardSize`. Each zone and the Total group start with a `group-start` cell (left separator on every row) under
+  a centred zone header; the sticky name column has an end shadow. Name cells wrap (`overflow-wrap: anywhere`, at
+  most about a third of the card width) and carry the full name as `title`; numbers never wrap.
+- **Nested devices.** A device with `devices[].upstream` in the report is shown directly after its upstream
+  (depth-first, report order among siblings), indented, prefixed with "↳", and a note explains that its energy is
+  counted in the total only for hours where the upstream has no data. The "by period" device list keeps the
+  report order.
+- **`hass` update gate.** Home Assistant replaces `hass` on every entity state change. The property's `hasChanged`
+  (`hassChanged`, `frontend/src/hass.ts`) is true only for the first value or when the language, the locale
+  language or the time zone changes, so unrelated updates neither re-render the card nor touch an open native
+  dropdown. The newest `hass` is still stored for `callWS`.
 - **Language.** English and Russian strings in the card (`hass.locale.language`); numbers, money (HA currency) and
   dates via `Intl` in that locale.
 
