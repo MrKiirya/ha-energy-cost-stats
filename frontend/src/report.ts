@@ -81,7 +81,7 @@ export interface CompareDocument {
 export interface HassLike {
   callWS<T>(msg: Record<string, unknown>): Promise<T>;
   language?: string;
-  locale?: { language?: string };
+  locale?: { language?: string; time_zone?: string };
   config?: { time_zone?: string; currency?: string };
 }
 
