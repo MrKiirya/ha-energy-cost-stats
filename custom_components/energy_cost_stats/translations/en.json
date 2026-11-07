@@ -175,7 +175,7 @@
       },
       "yaml_mode": {
         "title": "Configured in YAML",
-        "description": "The configuration comes from the energy_cost_stats block in configuration.yaml and cannot be changed here. Edit the file and run the action `energy_cost_stats.reload` (Developer tools, YAML) to apply it without a restart.\n\n- Time zone: {time_zone}\n- Spike limit: {spike_limit}\n- Compared tariffs: {compare}\n- Sidebar: {sidebar}\n\nError of the last load, if any: {error}",
+        "description": "The configuration comes from the energy_cost_stats block in configuration.yaml and cannot be changed here. Edit the file and run the action `energy_cost_stats.reload` (Settings → Tools → YAML; Developer tools → YAML in older releases) to apply it without a restart.\n\n- Time zone: {time_zone}\n- Spike limit: {spike_limit}\n- Compared tariffs: {compare}\n- Sidebar: {sidebar}\n\nError of the last load, if any: {error}",
         "menu_options": {
           "sensors_view": "Sensors",
           "applied_view": "Applied tariffs",
