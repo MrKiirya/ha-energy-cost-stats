@@ -41,7 +41,9 @@ OPTIONS: dict[str, Any] = {
 def add_url(hass: HomeAssistant) -> Iterator[MagicMock]:
     """Frontend marked as loaded (its package is not installed in the tests)."""
     hass.config.components.add("frontend")
-    hass.data[DATA_PANELS] = {}
+    # Typed as Any: the panel registry's value type differs between HA versions.
+    panels: Any = {}
+    hass.data[DATA_PANELS] = panels
     with patch(
         "custom_components.energy_cost_stats.frontend.add_extra_js_url"
     ) as patched:
