@@ -85,6 +85,10 @@ Task and review files are public too — use generic examples.
 - Card — Vitest (happy-dom) with mocked `hass.callWS` (`frontend/test/`); after changing `frontend/src`, run
   `npm run build` and commit the bundle.
 
+## Translations
+Any change to `strings.json` must update `translations/en.json` and every other `translations/*.json` in the same
+change; the unit tests in `tests/unit/test_metadata.py` enforce matching keys and placeholders.
+
 ## Definition of done
 - New behaviour covered by tests written first; all test levels touched by the change are green.
 - `ruff check`, `ruff format --check`, `pyright` pass.
