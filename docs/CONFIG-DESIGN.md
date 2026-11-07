@@ -187,5 +187,5 @@ In YAML mode every step shows the current values read-only with a hint to edit t
 | 020 | Sensor selection: modes, include / exclude with targets and globs, overrides, dynamic matching, preview |
 | 021 | YAML mode: schema (numbers → decimal strings), read-only UI, `reload` action, repairs, export to YAML |
 | 022 | Card: comparison section using the integration's tariffs; full-width default in sections views |
-| 023 | Sidebar panel: integration panel with Home Assistant's energy date picker and the card |
+| 023 | Sidebar panel: integration panel with the card and its period picker |
 | 024 | Russian translations of the forms |

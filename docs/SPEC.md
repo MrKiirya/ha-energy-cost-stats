@@ -43,7 +43,7 @@ three-zone residential tariffs.
 - Settings (single instance, `single_config_entry`): all settings live in `entry.options` (`entry.data` is empty):
   `time_zone`, `spike_limit` (decimal string, `null` = check off), `sensors` (the selection, below), `applied` (list of
   `{from, tariff}`, §3; omitted = nothing applied), optional `compare` (list of tariff ids, §3) and optional
-  `panel` (`{show, title, icon}`, the planned sidebar entry; stored only, it has no effect yet). Decimals are
+  `panel` (`{show, title, icon}`, the sidebar entry, see §4.1 "Sidebar panel"). Decimals are
   strings without exponent. The time zone is stored explicitly (default: the Home Assistant time zone at setup) and does
   not follow later Home Assistant changes, so retroactive prices never move silently. The config flow asks for
   time zone and spike limit. "Configure" opens an options menu: **Sensors** (selection and per-sensor spike limits,
@@ -418,6 +418,19 @@ the repo as is, with no build step) and CI fails when it does not match the sour
   (`hassChanged`, `frontend/src/hass.ts`) is true only for the first value or when the language, the locale
   language or the time zone changes, so unrelated updates neither re-render the card nor touch an open native
   dropdown. The newest `hass` is still stored for `callWS`.
+- **Sidebar panel.** With `panel.show` true (General options or the YAML block) the integration registers a custom
+  panel at `/energy-cost-stats` with `panel_custom` (`embed_iframe: false`, not admin-only: it shows what the card
+  shows, and the websocket commands are not admin-only either), with the `panel.title` and `panel.icon` as sidebar
+  entry. Its element `energy-cost-stats-panel` is in the card bundle and renders a top bar (panel title, a menu
+  button on narrow screens that fires `hass-toggle-menu`) and the card at full width without its own title, with
+  the card's own period picker. The panel's `module_url` is the same versioned URL as the extra module, so the
+  bundle runs once; the element is defined only if it is not defined yet and is not a dashboard card. The panel
+  follows the config entry: registered at the end of setup, removed on unload, so option changes and the YAML
+  `reload` action (which reload the entry) update the sidebar without a restart. Without the `frontend`
+  integration nothing is registered. If the URL path is taken (e.g. by a `panel_custom` entry in YAML) a warning is
+  logged, the entry still loads and the foreign panel is left alone. The element also reads an optional
+  `panel.config.card` (card options), which the integration does not send yet. Like the card, the panel forwards
+  every `hass` to the card but re-renders only under the `hass` update gate.
 - **Language.** English and Russian strings in the card (`hass.locale.language`); numbers, money (HA currency) and
   dates via `Intl` in that locale.
 

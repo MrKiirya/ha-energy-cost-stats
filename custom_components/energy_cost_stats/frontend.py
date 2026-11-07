@@ -20,9 +20,12 @@ from homeassistant.components.http import (
     StaticPathConfig,  # pyright: ignore[reportPrivateImportUsage]
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.util.hass_dict import HassKey
 
 from .const import CARD_URL
 
+# The versioned URL passed to ``add_extra_js_url``; the sidebar panel reuses it.
+DATA_CARD_MODULE_URL: HassKey[str] = HassKey("energy_cost_stats_card_module_url")
 CARD_PATH = Path(__file__).parent / "frontend" / "energy-cost-stats-card.js"
 
 
@@ -40,4 +43,11 @@ async def async_register_card(hass: HomeAssistant) -> None:
         [StaticPathConfig(CARD_URL, str(CARD_PATH), cache_headers=True)]
     )
     if "frontend" in hass.config.components:
-        add_extra_js_url(hass, f"{CARD_URL}?v={card_version(content)}")
+        url = f"{CARD_URL}?v={card_version(content)}"
+        hass.data[DATA_CARD_MODULE_URL] = url
+        add_extra_js_url(hass, url)
+
+
+def card_module_url(hass: HomeAssistant) -> str | None:
+    """The versioned bundle URL, or None when the frontend is not loaded."""
+    return hass.data.get(DATA_CARD_MODULE_URL)

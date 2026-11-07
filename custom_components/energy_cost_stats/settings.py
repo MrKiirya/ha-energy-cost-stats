@@ -53,7 +53,7 @@ class SettingsError(ValueError):
 
 @dataclass(frozen=True)
 class PanelSettings:
-    """Sidebar panel options (stored only; the panel itself comes later)."""
+    """Sidebar panel options: whether to show the entry, and its title and icon."""
 
     show: bool
     title: str

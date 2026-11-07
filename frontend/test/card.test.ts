@@ -114,6 +114,16 @@ describe("config", () => {
   });
 });
 
+describe("title", () => {
+  it("an empty title hides the title text", async () => {
+    const { card } = await mount({ title: "" });
+    expect(card.shadowRoot!.querySelector(".title")).toBeNull();
+    expect(card.shadowRoot!.querySelector(".picker")).not.toBeNull();
+    const { card: plain } = await mount();
+    expect(text(plain, ".title")).toBe("Energy cost");
+  });
+});
+
 describe("request", () => {
   it("loads this month by day by default, with an exclusive end", async () => {
     const { hass } = await mount();

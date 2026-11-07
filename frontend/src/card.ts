@@ -366,12 +366,14 @@ export class EnergyCostStatsCard extends LitElement {
     const title = this._config.title ?? s.t("title");
     return html`
       <ha-card>
-        <div class="header">
-          <div class="title">${title}</div>
-          ${this._loading
-            ? html`<div class="loading" role="status">${s.t("loading")}</div>`
-            : nothing}
-        </div>
+        ${title || this._loading
+          ? html`<div class="header">
+              ${title ? html`<div class="title">${title}</div>` : nothing}
+              ${this._loading
+                ? html`<div class="loading" role="status">${s.t("loading")}</div>`
+                : nothing}
+            </div>`
+          : nothing}
         ${this._renderPicker(s)}
         <div class="content">
           ${this._error

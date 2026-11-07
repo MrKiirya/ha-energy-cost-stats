@@ -50,7 +50,7 @@ describe("registration", () => {
     await Promise.resolve();
 
     expect(early.defined).toEqual([]);
-    expect(final.defined).toEqual(["energy-cost-stats-card"]);
+    expect(final.defined).toEqual(["energy-cost-stats-card", "energy-cost-stats-panel"]);
     expect(window.customCards?.map((c) => c.type)).toEqual(["energy-cost-stats-card"]);
   });
 
@@ -64,7 +64,7 @@ describe("registration", () => {
       const { BOOT_TIMEOUT_MS } = await import("../src/index");
       expect(registry.defined).toEqual([]);
       vi.advanceTimersByTime(BOOT_TIMEOUT_MS);
-      expect(registry.defined).toEqual(["energy-cost-stats-card"]);
+      expect(registry.defined).toEqual(["energy-cost-stats-card", "energy-cost-stats-panel"]);
       expect(warn).toHaveBeenCalledOnce();
       warn.mockRestore();
     } finally {
@@ -77,14 +77,14 @@ describe("registration", () => {
     const registry = fakeRegistry(["home-assistant"]);
     useRegistry(registry);
     await import("../src/index");
-    expect(registry.defined).toEqual(["energy-cost-stats-card"]);
+    expect(registry.defined).toEqual(["energy-cost-stats-card", "energy-cost-stats-panel"]);
   });
 
   it("defines right away outside the HA page", async () => {
     const registry = fakeRegistry();
     useRegistry(registry);
     await import("../src/index");
-    expect(registry.defined).toEqual(["energy-cost-stats-card"]);
+    expect(registry.defined).toEqual(["energy-cost-stats-card", "energy-cost-stats-panel"]);
   });
 
   it("does not define or announce twice", async () => {
@@ -92,7 +92,17 @@ describe("registration", () => {
     useRegistry(registry);
     const { defineCard } = await import("../src/index");
     defineCard();
-    expect(registry.defined).toEqual(["energy-cost-stats-card"]);
+    expect(registry.defined).toEqual(["energy-cost-stats-card", "energy-cost-stats-panel"]);
     expect(window.customCards).toHaveLength(1);
+  });
+
+  it("defines the panel once and not as a card", async () => {
+    const registry = fakeRegistry();
+    useRegistry(registry);
+    const { defineCard } = await import("../src/index");
+    defineCard();
+    defineCard();
+    expect(registry.defined).toEqual(["energy-cost-stats-card", "energy-cost-stats-panel"]);
+    expect(window.customCards?.map((c) => c.type)).toEqual(["energy-cost-stats-card"]);
   });
 });

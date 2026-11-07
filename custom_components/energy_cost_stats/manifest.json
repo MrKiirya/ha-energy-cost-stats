@@ -1,7 +1,7 @@
 {
   "domain": "energy_cost_stats",
   "name": "Energy Cost Stats",
-  "after_dependencies": ["frontend", "energy"],
+  "after_dependencies": ["frontend", "energy", "panel_custom"],
   "codeowners": ["@MrKiirya"],
   "config_flow": true,
   "dependencies": ["http", "recorder"],
