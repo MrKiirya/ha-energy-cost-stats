@@ -105,7 +105,7 @@
         "sections": {
           "sidebar": {
             "name": "Sidebar",
-            "description": "Show the energy cost panel in the sidebar. The panel itself is not available yet; the settings are stored for later.",
+            "description": "Show a sidebar entry that opens the energy cost page (the card at full width). Changes apply immediately.",
             "data": {
               "show": "Show in sidebar",
               "title": "Title",

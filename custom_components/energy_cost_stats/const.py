@@ -36,7 +36,9 @@ CONF_SHOW: Final = "show"
 CONF_TITLE: Final = "title"
 CONF_ICON: Final = "icon"
 
-# Sidebar panel defaults (the panel itself is not implemented yet).
+# Sidebar panel: defaults and registration constants (mirrored in frontend/src).
+PANEL_URL_PATH: Final = "energy-cost-stats"
+PANEL_ELEMENT: Final = "energy-cost-stats-panel"
 DEFAULT_PANEL_SHOW: Final = False
 DEFAULT_PANEL_TITLE: Final = "Energy cost"
 DEFAULT_PANEL_ICON: Final = "mdi:cash-multiple"

@@ -1,6 +1,7 @@
 /** Bundle entry: registers the card element and announces it to the card picker. */
 
 import { CARD_TYPE, EnergyCostStatsCard } from "./card";
+import { EnergyCostStatsPanel, PANEL_ELEMENT } from "./panel";
 
 declare global {
   interface Window {
@@ -13,17 +14,20 @@ export const BOOT_TIMEOUT_MS = 30_000;
 /** Define the element in the registry that is current *now* (read at call time). */
 export function defineCard(): void {
   const registry = window.customElements;
-  if (registry.get(CARD_TYPE)) return;
-  registry.define(CARD_TYPE, EnergyCostStatsCard);
-  window.customCards = window.customCards ?? [];
-  if (!window.customCards.some((card) => card.type === CARD_TYPE)) {
-    window.customCards.push({
-      type: CARD_TYPE,
-      name: "Energy Cost Stats",
-      description: "Electricity cost per device, split by tariff zones",
-      preview: false,
-    });
+  if (!registry.get(CARD_TYPE)) {
+    registry.define(CARD_TYPE, EnergyCostStatsCard);
+    window.customCards = window.customCards ?? [];
+    if (!window.customCards.some((card) => card.type === CARD_TYPE)) {
+      window.customCards.push({
+        type: CARD_TYPE,
+        name: "Energy Cost Stats",
+        description: "Electricity cost per device, split by tariff zones",
+        preview: false,
+      });
+    }
   }
+  // The sidebar panel element lives in the same bundle; it is not a dashboard card.
+  if (!registry.get(PANEL_ELEMENT)) registry.define(PANEL_ELEMENT, EnergyCostStatsPanel);
 }
 
 /**

@@ -10,7 +10,7 @@ The websocket command and the response-only service are registered once in
 ``async_setup``; they read the loaded entry. ``async_setup`` also serves the
 Lovelace card bundle (``frontend.py``) and loads the optional YAML block
 (``yaml_mode.py``), which is written into the entry on setup. No entities or platforms
-are created.
+are created; the only UI addition is the optional sidebar panel (``panel.py``).
 """
 
 import asyncio
@@ -40,6 +40,7 @@ from .engine.tariff import TariffSchedule, TariffValidationError
 from .engine.tariff_config import TariffConfig, config_from_data, effective_schedule
 from .engine.tariff_edit import remove_from_applied
 from .frontend import async_register_card
+from .panel import async_setup_panel
 from .sensor_resolver import async_default_sensor_settings
 from .services import async_register_services
 from .settings import (
@@ -121,6 +122,7 @@ async def async_setup_entry(
         schedule=schedule,
     )
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
+    await async_setup_panel(hass, entry, settings)
     return True
 
 
