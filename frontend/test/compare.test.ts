@@ -93,3 +93,27 @@ describe("hassChanged", () => {
     expect(hassChanged(undefined, undefined)).toBe(false);
   });
 });
+
+describe("orderNested with a comparator", () => {
+  const dev = (entity_id: string, upstream: string | null = null) => ({ entity_id, upstream });
+  const reverse = (a: string, b: string) => b.localeCompare(a);
+
+  it("sorts roots and children among siblings, keeping children under their parent", () => {
+    const out = orderNested(
+      [dev("a"), dev("c1", "a"), dev("c2", "a"), dev("g", "c1"), dev("b")],
+      reverse,
+    );
+    expect(out).toEqual([
+      { entity_id: "b", depth: 0 },
+      { entity_id: "a", depth: 0 },
+      { entity_id: "c2", depth: 1 },
+      { entity_id: "c1", depth: 1 },
+      { entity_id: "g", depth: 2 },
+    ]);
+  });
+
+  it("keeps report order for cycle members", () => {
+    const out = orderNested([dev("a", "b"), dev("b", "a"), dev("c")], reverse);
+    expect(out.map((r) => r.entity_id)).toEqual(["c", "a", "b"]);
+  });
+});

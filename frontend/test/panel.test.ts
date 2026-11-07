@@ -154,3 +154,11 @@ describe("panel", () => {
     expect(bad.shadowRoot!.querySelector('[role="alert"]')!.textContent).toMatch(/period/);
   });
 });
+
+describe("sticky toolbar", () => {
+  it("keeps the bar on top and tells the card where to stick", () => {
+    const css = EnergyCostStatsPanel.styles.toString();
+    expect(css).toMatch(/\.toolbar\s*{[^}]*position: sticky/);
+    expect(css).toMatch(/--energy-cost-stats-sticky-top:\s*var\(--header-height/);
+  });
+});
