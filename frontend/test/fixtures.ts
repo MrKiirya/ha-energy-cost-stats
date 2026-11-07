@@ -1,4 +1,4 @@
-import type { Bucket, ReportDocument, Row } from "../src/report";
+import type { Bucket, CompareDocument, ReportDocument, Row } from "../src/report";
 
 export function row(
   entity_id: string | null,
@@ -64,8 +64,8 @@ export function report(overrides: Partial<ReportDocument> = {}): ReportDocument 
     ],
     plans: [{ valid_from: "2026-01-01", name: "Two-zone" }],
     devices: [
-      { entity_id: "sensor.plug_01", name: "Plug 01", statistics: "ok" },
-      { entity_id: "sensor.plug_02", name: "Plug 02", statistics: "ok" },
+      { entity_id: "sensor.plug_01", name: "Plug 01", statistics: "ok", upstream: null },
+      { entity_id: "sensor.plug_02", name: "Plug 02", statistics: "ok", upstream: null },
     ],
     buckets: [
       bucket(
@@ -92,6 +92,29 @@ export function report(overrides: Partial<ReportDocument> = {}): ReportDocument 
         hours: 4,
         kwh: "1.000",
       },
+    ],
+    ...overrides,
+  };
+}
+
+/** A `total`-grouped document with the given total cost and kWh (comparison fixtures). */
+export function totalDoc(
+  cost: string | null,
+  kwh: string | null = "50.000",
+  overrides: Partial<ReportDocument> = {},
+): ReportDocument {
+  const doc = report({ grouping: "total", buckets: [], ...overrides });
+  doc.totals.total = { ...doc.totals.total, cost, kwh };
+  return doc;
+}
+
+/** Actual 100.00 against a dearer (112.50) and a cheaper (90.00) tariff. */
+export function compareDoc(overrides: Partial<CompareDocument> = {}): CompareDocument {
+  return {
+    actual: totalDoc("100.00"),
+    tariffs: [
+      { id: "three_zone", name: "Three-zone", report: totalDoc("112.50", "50.000", { plans: [] }) },
+      { id: "flat", name: "Flat", report: totalDoc("90.00", "50.000", { plans: [] }) },
     ],
     ...overrides,
   };
