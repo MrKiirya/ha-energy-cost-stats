@@ -1,15 +1,20 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import "../src/index";
 import type { EnergyCostStatsCard } from "../src/card";
-import type { HassLike, ReportDocument } from "../src/report";
-import { report, row } from "./fixtures";
+import type { CompareDocument, HassLike, ReportDocument } from "../src/report";
+import { compareDoc, report, row, totalDoc } from "./fixtures";
 
 type Msg = Record<string, unknown>;
 
+const REPORT = "energy_cost_stats/report";
+const COMPARE = "energy_cost_stats/compare";
+
+/** `respond` answers report calls, `respondCompare` the compare calls. */
 function makeHass(
   respond: (msg: Msg) => Promise<unknown> = async () => report(),
   language = "en",
   timeZone = "Europe/Moscow",
+  respondCompare: (msg: Msg) => Promise<unknown> = async () => compareDoc(),
 ): HassLike & { calls: Msg[] } {
   const calls: Msg[] = [];
   return {
@@ -19,9 +24,18 @@ function makeHass(
     config: { time_zone: timeZone, currency: "RUB" },
     callWS: <T>(msg: Msg) => {
       calls.push(msg);
-      return respond(msg) as Promise<T>;
+      return (msg.type === COMPARE ? respondCompare(msg) : respond(msg)) as Promise<T>;
     },
   };
+}
+
+function callsOf(hass: { calls: Msg[] }, type: string): Msg[] {
+  return hass.calls.filter((c) => c.type === type);
+}
+
+function lastOf(hass: { calls: Msg[] }, type: string): Msg {
+  const found = callsOf(hass, type);
+  return found[found.length - 1]!;
 }
 
 async function mount(
@@ -67,7 +81,7 @@ async function choose(card: EnergyCostStatsCard, selector: string, value: string
 }
 
 function last(hass: { calls: Msg[] }): Msg {
-  return hass.calls[hass.calls.length - 1]!;
+  return lastOf(hass, REPORT);
 }
 
 beforeEach(() => {
@@ -103,7 +117,7 @@ describe("config", () => {
 describe("request", () => {
   it("loads this month by day by default, with an exclusive end", async () => {
     const { hass } = await mount();
-    expect(hass.calls).toEqual([
+    expect(callsOf(hass, REPORT)).toEqual([
       {
         type: "energy_cost_stats/report",
         start: "2026-11-01",
@@ -139,7 +153,7 @@ describe("request", () => {
 describe("time zone", () => {
   it("asks again in the integration's time zone when it differs from HA's", async () => {
     const { hass } = await mount({}, makeHass(undefined, "en", "UTC"));
-    expect(hass.calls.map((c) => c.end)).toEqual([
+    expect(callsOf(hass, REPORT).map((c) => c.end)).toEqual([
       "2026-11-06T12:00:00+00:00",
       "2026-11-06T15:00:00+03:00",
     ]);
@@ -147,7 +161,7 @@ describe("time zone", () => {
 
   it("does not ask again for a past period", async () => {
     const { hass } = await mount({ period: "last_month" }, makeHass(undefined, "en", "UTC"));
-    expect(hass.calls).toHaveLength(1);
+    expect(callsOf(hass, REPORT)).toHaveLength(1);
   });
 });
 
@@ -238,8 +252,9 @@ describe("period picker", () => {
   it("refresh re-requests the same period", async () => {
     const { card, hass } = await mount();
     await click(card, "button.refresh");
-    expect(hass.calls).toHaveLength(2);
-    expect(hass.calls[1]).toEqual(hass.calls[0]);
+    const reports = callsOf(hass, REPORT);
+    expect(reports).toHaveLength(2);
+    expect(reports[1]).toEqual(reports[0]);
   });
 });
 
@@ -375,5 +390,401 @@ describe("errors and races", () => {
     resolveFirst(report());
     await settle(card);
     expect(text(card)).toContain("Newer 2026-10-01");
+  });
+});
+
+function bodyRows(card: EnergyCostStatsCard, table = "table.devices"): HTMLTableRowElement[] {
+  return [...card.shadowRoot!.querySelectorAll<HTMLTableRowElement>(`${table} tbody tr`)];
+}
+
+function compareRows(card: EnergyCostStatsCard): string[][] {
+  return [...card.shadowRoot!.querySelectorAll("table.comparison tbody tr")].map((tr) =>
+    [...tr.querySelectorAll("th, td")].map((c) => (c.textContent ?? "").replace(/\s+/g, " ").trim()),
+  );
+}
+
+describe("comparison", () => {
+  it("requests compare with the same period and entities", async () => {
+    const { hass } = await mount({ entities: ["sensor.plug_01", "sensor.plug_02"] });
+    const compare = lastOf(hass, COMPARE);
+    const rep = lastOf(hass, REPORT);
+    expect(compare.start).toBe(rep.start);
+    expect(compare.end).toBe(rep.end);
+    expect(compare.entities).toEqual(["sensor.plug_01", "sensor.plug_02"]);
+    expect(compare).not.toHaveProperty("tariffs");
+    expect(compare).not.toHaveProperty("grouping");
+  });
+
+  it("grouping change does not re-request compare", async () => {
+    const { card, hass } = await mount({ show_breakdown: true });
+    expect(callsOf(hass, COMPARE)).toHaveLength(1);
+    await choose(card, "select.grouping", "week");
+    expect(callsOf(hass, REPORT)).toHaveLength(2);
+    expect(callsOf(hass, COMPARE)).toHaveLength(1);
+    await click(card, "button.refresh");
+    expect(callsOf(hass, REPORT)).toHaveLength(3);
+    expect(callsOf(hass, COMPARE)).toHaveLength(2);
+    await click(card, "button.prev");
+    expect(callsOf(hass, REPORT)).toHaveLength(4);
+    expect(callsOf(hass, COMPARE)).toHaveLength(3);
+    expect(lastOf(hass, COMPARE).start).toBe("2026-10-01");
+  });
+
+  it("shows actual and each compared tariff with the difference", async () => {
+    const { card } = await mount();
+    const rows = compareRows(card);
+    expect(rows).toHaveLength(3);
+    expect(rows[0]![0]).toContain("Actual");
+    expect(rows[0]![0]).toContain("Two-zone");
+    expect(rows[0]![1]).toContain("100.00");
+    expect(rows[1]![0]).toContain("Three-zone");
+    expect(rows[1]![1]).toContain("112.50");
+    expect(rows[1]![2]).toContain("+");
+    expect(rows[1]![2]).toContain("12.50");
+    expect(rows[1]![3]).toBe("+12.5 %");
+    expect(rows[2]![0]).toContain("Flat");
+    expect(rows[2]![2]).toMatch(/^[-−]\D*10\.00$/);
+    expect(rows[2]![3]).toMatch(/^[-−]10\.0 %$/);
+    // Average price = cost / kWh.
+    expect(rows[1]![4]).toContain("2.25");
+  });
+
+  it("joins several plan names of the actual schedule", async () => {
+    const actual = totalDoc("100.00", "50.000", {
+      plans: [
+        { valid_from: "2026-01-01", name: "Old" },
+        { valid_from: "2026-06-01", name: "New" },
+      ],
+    });
+    const { card } = await mount({}, makeHass(undefined, "en", "Europe/Moscow", async () => compareDoc({ actual })));
+    expect(compareRows(card)[0]![0]).toContain("Old → New");
+  });
+
+  it("null cost gives a dash difference", async () => {
+    const doc = compareDoc({
+      actual: totalDoc("0.00"),
+      tariffs: [
+        { id: "a", name: "Unknown", report: totalDoc(null) },
+        { id: "b", name: "Dearer", report: totalDoc("5.00") },
+      ],
+    });
+    const { card } = await mount({}, makeHass(undefined, "en", "Europe/Moscow", async () => doc));
+    const rows = compareRows(card);
+    expect(rows[1]![1]).toBe("—");
+    expect(rows[1]![2]).toBe("—");
+    expect(rows[1]![3]).toBe("—");
+    expect(rows[2]![2]).toContain("5.00");
+    expect(rows[2]![3]).toBe("—");
+  });
+
+  it("shows a dash for a missing actual cost (no plan)", async () => {
+    const doc = compareDoc({ actual: totalDoc(null, "50.000", { plans: [] }) });
+    const { card } = await mount({}, makeHass(undefined, "en", "Europe/Moscow", async () => doc));
+    const rows = compareRows(card);
+    expect(rows[0]![1]).toBe("—");
+    expect(rows[1]![1]).toContain("112.50");
+    expect(rows[1]![2]).toBe("—");
+  });
+
+  it("warns when a tariff leaves hours unpriced", async () => {
+    const doc = compareDoc();
+    doc.tariffs[0]!.report.unpriced_hours = 36;
+    const { card } = await mount({}, makeHass(undefined, "en", "Europe/Moscow", async () => doc));
+    const badges = card.shadowRoot!.querySelectorAll("table.comparison .badge");
+    expect(badges).toHaveLength(1);
+    expect(badges[0]!.getAttribute("title")).toBe(
+      "36 h not priced by this tariff — the difference covers only the priced hours",
+    );
+  });
+
+  it("empty list shows the hint", async () => {
+    const { card } = await mount(
+      {},
+      makeHass(undefined, "en", "Europe/Moscow", async () => compareDoc({ tariffs: [] })),
+    );
+    expect(text(card, ".comparison")).toContain("No tariffs to compare");
+    expect(card.shadowRoot!.querySelector("table.comparison")).toBeNull();
+  });
+
+  it("older integration hides the section", async () => {
+    const hass = makeHass(undefined, "en", "Europe/Moscow", async () => {
+      throw { code: "unknown_command", message: "Unknown command." };
+    });
+    const { card } = await mount({}, hass);
+    expect(card.shadowRoot!.querySelector(".comparison")).toBeNull();
+    expect(card.shadowRoot!.querySelector(".error")).toBeNull();
+    expect(bodyRows(card)).toHaveLength(2);
+  });
+
+  it("a compare error does not hide the table", async () => {
+    const hass = makeHass(undefined, "en", "Europe/Moscow", async () => {
+      throw { code: "home_assistant_error", message: "boom" };
+    });
+    const { card } = await mount({}, hass);
+    expect(text(card, ".comparison .error")).toContain("boom");
+    expect(bodyRows(card)).toHaveLength(2);
+  });
+
+  it("stale compare response is dropped", async () => {
+    let resolveFirst: (doc: CompareDocument) => void = () => {};
+    let call = 0;
+    const hass = makeHass(undefined, "en", "Europe/Moscow", () =>
+      new Promise((resolve) => {
+        call += 1;
+        if (call === 1) resolveFirst = resolve as (doc: CompareDocument) => void;
+        else resolve(compareDoc({ tariffs: [{ id: "n", name: "Newer", report: totalDoc("1.00") }] }));
+      }),
+    );
+    const { card } = await mount({}, hass);
+    await click(card, "button.prev");
+    resolveFirst(compareDoc());
+    await settle(card);
+    expect(text(card, ".comparison")).toContain("Newer");
+    expect(text(card, ".comparison")).not.toContain("Three-zone");
+  });
+
+  it("marks the comparison as loading while a slower compare is pending", async () => {
+    let resolveSecond: (doc: CompareDocument) => void = () => {};
+    let call = 0;
+    const hass = makeHass(undefined, "en", "Europe/Moscow", () =>
+      call++ === 0
+        ? Promise.resolve(compareDoc())
+        : new Promise((resolve) => {
+            resolveSecond = resolve as (doc: CompareDocument) => void;
+          }),
+    );
+    const { card } = await mount({}, hass);
+    expect(card.shadowRoot!.querySelector("section.comparison.loading")).toBeNull();
+    await click(card, "button.prev");
+    // The report is done, the comparison is still the previous period's.
+    expect(card.shadowRoot!.querySelector(".header .loading")).toBeNull();
+    const section = q(card, "section.comparison");
+    expect(section.classList.contains("loading")).toBe(true);
+    expect(section.getAttribute("aria-busy")).toBe("true");
+    expect(text(card, "section.comparison .loading")).toContain("Loading");
+    resolveSecond(
+      compareDoc({ tariffs: [{ id: "n", name: "Newer", report: totalDoc("1.00") }] }),
+    );
+    await settle(card);
+    expect(card.shadowRoot!.querySelector("section.comparison.loading")).toBeNull();
+    expect(text(card, "section.comparison")).toContain("Newer");
+  });
+
+  it("re-sends compare on the time zone retry", async () => {
+    const { hass } = await mount({}, makeHass(undefined, "en", "UTC"));
+    expect(callsOf(hass, COMPARE).map((c) => c.end)).toEqual([
+      "2026-11-06T12:00:00+00:00",
+      "2026-11-06T15:00:00+03:00",
+    ]);
+  });
+
+  it("re-sends report and compare on the running-period timer", async () => {
+    vi.useFakeTimers({ toFake: ["Date", "setInterval", "clearInterval"] });
+    vi.setSystemTime(new Date("2026-11-06T12:00:00Z"));
+    const { hass } = await mount();
+    expect(callsOf(hass, COMPARE)).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(10 * 60 * 1000);
+    await settle(hass as never);
+    expect(callsOf(hass, REPORT)).toHaveLength(2);
+    expect(callsOf(hass, COMPARE)).toHaveLength(2);
+  });
+
+  it("translates an unknown tariff error", async () => {
+    const hass = makeHass(undefined, "en", "Europe/Moscow", async () => {
+      throw { code: "unknown_tariff", message: "raw" };
+    });
+    const { card } = await mount({}, hass);
+    expect(text(card, ".comparison .error")).toContain("not defined");
+    expect(text(card, ".comparison .error")).not.toContain("raw");
+  });
+
+  it("labels the first column with a short heading", async () => {
+    const { card } = await mount();
+    expect(text(card, "table.comparison thead th.name")).toBe("Tariff");
+  });
+
+  it("explains actual-side unpriced hours separately", async () => {
+    const doc = compareDoc({ actual: totalDoc("100.00", "50.000", { unpriced_hours: 5 }) });
+    const { card } = await mount({}, makeHass(undefined, "en", "Europe/Moscow", async () => doc));
+    const titles = [...card.shadowRoot!.querySelectorAll("table.comparison .badge")].map((b) =>
+      b.getAttribute("title"),
+    );
+    // Every compared row inherits the actual schedule's gap.
+    expect(titles).toHaveLength(2);
+    for (const title of titles) {
+      expect(title).toContain("5 h");
+      expect(title).toContain("actual");
+    }
+  });
+
+  it("speaks Russian", async () => {
+    const { card } = await mount({}, makeHass(undefined, "ru"));
+    expect(text(card, ".comparison")).toContain("Сравнение тарифов");
+    expect(text(card, ".comparison")).toContain("Фактически");
+  });
+
+  it("does not add a compare option to the config", async () => {
+    const card = document.createElement("energy-cost-stats-card") as EnergyCostStatsCard;
+    // Unknown keys are ignored, not interpreted.
+    expect(() => card.setConfig({ type: "x", compare: ["a"] } as never)).not.toThrow();
+  });
+});
+
+describe("layout", () => {
+  it("asks for the full width in sections views", async () => {
+    const { card } = await mount();
+    expect(card.getGridOptions()).toEqual({ columns: "full", min_columns: 6 });
+    expect(card.getGridOptions()).not.toHaveProperty("rows");
+  });
+
+  it("zone groups start with a separator cell", async () => {
+    const { card } = await mount();
+    const head = card.shadowRoot!.querySelectorAll("table.devices thead tr");
+    const zones = head[0]!.querySelectorAll("th.zone");
+    expect(zones).toHaveLength(3);
+    for (const th of zones) expect(th.classList.contains("group-start")).toBe(true);
+    expect(zones[0]!.getAttribute("colspan")).toBe("2");
+    expect(zones[1]!.getAttribute("colspan")).toBe("2");
+    expect(head[1]!.querySelectorAll("th.group-start")).toHaveLength(3);
+    for (const tr of [...bodyRows(card), card.shadowRoot!.querySelector("table.devices tfoot tr")!]) {
+      const cells = [...tr.querySelectorAll("td")];
+      // kWh, cost | kWh, cost | kWh, cost, avg. price
+      expect(cells.map((c) => c.classList.contains("group-start"))).toEqual([
+        true, false, true, false, true, false, false,
+      ]);
+    }
+  });
+
+  it("name cells carry the full name as title", async () => {
+    const { card } = await mount();
+    const titles = bodyRows(card).map((tr) => tr.querySelector("th.name")!.getAttribute("title"));
+    expect(titles).toEqual(["Plug 01", "Plug 02"]);
+  });
+});
+
+describe("nested devices", () => {
+  function nestedReport(): ReportDocument {
+    const doc = report();
+    doc.devices = [
+      { entity_id: "sensor.child", name: "Child", statistics: "ok", upstream: "sensor.parent" },
+      { entity_id: "sensor.other", name: "Other", statistics: "ok", upstream: null },
+      { entity_id: "sensor.parent", name: "Parent", statistics: "ok", upstream: null },
+    ];
+    doc.totals.rows = [
+      row("sensor.child", ["1.000", "10.30"], ["0.000", "0.00"]),
+      row("sensor.other", ["1.000", "10.30"], ["0.000", "0.00"]),
+      row("sensor.parent", ["2.000", "20.60"], ["0.000", "0.00"]),
+    ];
+    return doc;
+  }
+
+  it("nested rows follow their upstream, indented, with a note", async () => {
+    const { card } = await mount({}, makeHass(async () => nestedReport()));
+    const rows = bodyRows(card);
+    const names = rows.map((tr) => tr.querySelector("th.name")!.textContent!.replace(/\s+/g, " ").trim());
+    expect(names[0]).toBe("Other");
+    expect(names[1]).toBe("Parent");
+    expect(names[2]).toContain("Child");
+    expect(names[2]).toContain("↳");
+    expect(rows[2]!.classList.contains("nested")).toBe(true);
+    expect(rows[1]!.classList.contains("nested")).toBe(false);
+    const th = rows[2]!.querySelector("th.name")!;
+    expect(th.getAttribute("style")).toContain("--depth: 1");
+    expect(th.getAttribute("title")).toBe(
+      "Child — Measured inside Parent; not counted again in the total",
+    );
+    expect(text(card, ".nested-note")).toContain("Indented rows are measured inside");
+  });
+
+  it("breakdown device list keeps the report order", async () => {
+    const { card } = await mount({ show_breakdown: true }, makeHass(async () => nestedReport()));
+    const options = [...card.shadowRoot!.querySelectorAll<HTMLOptionElement>("select.breakdown-device option")];
+    expect(options.map((o) => o.value)).toEqual(["", "sensor.child", "sensor.other", "sensor.parent"]);
+  });
+
+  it("has no note without any upstream", async () => {
+    const { card } = await mount();
+    expect(card.shadowRoot!.querySelector(".nested-note")).toBeNull();
+    expect(card.shadowRoot!.querySelector("tr.nested")).toBeNull();
+  });
+});
+
+describe("hass updates", () => {
+  function entityOnly(hass: ReturnType<typeof makeHass>, n: number): ReturnType<typeof makeHass> {
+    return { ...hass, states: { "sensor.clock": { state: String(n) } } } as never;
+  }
+
+  it("an entity-state-only hass update does not re-render", async () => {
+    const { card, hass } = await mount();
+    const before = hass.calls.length;
+    const spy = vi.spyOn(card as never, "render");
+    const next = entityOnly(hass, 1);
+    card.hass = next;
+    await settle(card);
+    expect(spy).not.toHaveBeenCalled();
+    expect(hass.calls).toHaveLength(before);
+    expect(card.hass).toBe(next);
+  });
+
+  it("an entity-state-only hass update leaves the DOM untouched", async () => {
+    const { card, hass } = await mount({ show_breakdown: true });
+    const mutations: MutationRecord[] = [];
+    const observer = new MutationObserver((m) => mutations.push(...m));
+    observer.observe(card.shadowRoot!, { subtree: true, childList: true, attributes: true, characterData: true });
+    const cardSize = card.getCardSize();
+    const same = card.shadowRoot!.querySelector("ha-card");
+    card.hass = entityOnly(hass, 1);
+    await settle(card);
+    observer.disconnect();
+    expect(mutations).toEqual([]);
+    expect(card.shadowRoot!.querySelector("ha-card")).toBe(same);
+    expect(card.getCardSize()).toBe(cardSize);
+  });
+
+  it("the card element is not re-attached by hass updates", async () => {
+    const { card, hass } = await mount();
+    const connected = vi.spyOn(card, "connectedCallback");
+    const disconnected = vi.spyOn(card, "disconnectedCallback");
+    for (let i = 0; i < 3; i++) card.hass = entityOnly(hass, i);
+    await settle(card);
+    expect(connected).not.toHaveBeenCalled();
+    expect(disconnected).not.toHaveBeenCalled();
+  });
+
+  it("the card size does not change while loading", async () => {
+    const { card } = await mount();
+    const size = card.getCardSize();
+    const pending = new Promise<never>(() => {});
+    card.hass = { ...makeHass(() => pending), language: "ru", locale: { language: "ru" } };
+    await click(card, "button.refresh");
+    expect(card.shadowRoot!.querySelector(".loading")).not.toBeNull();
+    expect(card.getCardSize()).toBe(size);
+  });
+
+  it("a language change re-renders", async () => {
+    const { card, hass } = await mount();
+    card.hass = { ...hass, language: "ru", locale: { language: "ru" } };
+    await settle(card);
+    expect(text(card)).toContain("Итого");
+  });
+
+  it("a time zone change triggers an update", async () => {
+    const { card, hass } = await mount();
+    const spy = vi.spyOn(card as never, "render");
+    card.hass = { ...hass, config: { time_zone: "Europe/Berlin" } };
+    await settle(card);
+    expect(spy).toHaveBeenCalled();
+  });
+
+  it("an open select keeps its node and value across hass updates", async () => {
+    const { card, hass } = await mount({ show_breakdown: true });
+    await choose(card, "select.grouping", "week");
+    const select = q<HTMLSelectElement>(card, "select.grouping");
+    for (let i = 0; i < 3; i++) {
+      card.hass = entityOnly(hass, i);
+      await settle(card);
+    }
+    expect(q<HTMLSelectElement>(card, "select.grouping")).toBe(select);
+    expect(select.value).toBe("week");
   });
 });
