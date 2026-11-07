@@ -24,11 +24,13 @@ export interface NestedRow {
 
 /**
  * Orders devices so each one follows its upstream (depth-first, report order among
- * siblings). A device whose upstream is not in the list keeps its place as a root.
- * A malformed cycle cannot loop: its members are appended as roots.
+ * siblings unless `compare` is given). A device whose upstream is not in the list keeps its place as a root.
+ * A malformed cycle cannot loop: its members are appended as roots (in report order).
+ * With `compare`, roots and each device's children are sorted among themselves.
  */
 export function orderNested(
   devices: readonly { entity_id: string; upstream?: string | null }[],
+  compare?: (a: string, b: string) => number,
 ): NestedRow[] {
   const ids = new Set(devices.map((d) => d.entity_id));
   const children = new Map<string, string[]>();
@@ -42,6 +44,10 @@ export function orderNested(
     } else {
       roots.push(device.entity_id);
     }
+  }
+  if (compare) {
+    roots.sort(compare);
+    for (const list of children.values()) list.sort(compare);
   }
   const out: NestedRow[] = [];
   const seen = new Set<string>();

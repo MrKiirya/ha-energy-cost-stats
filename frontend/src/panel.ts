@@ -99,10 +99,15 @@ export class EnergyCostStatsPanel extends LitElement {
     :host {
       display: block;
       min-height: 100vh;
+      /* The card's period controls stick directly under the panel bar. */
+      --energy-cost-stats-sticky-top: var(--header-height, 56px);
       background: var(--primary-background-color);
       color: var(--primary-text-color);
     }
     .toolbar {
+      position: sticky;
+      top: 0;
+      z-index: 5;
       display: flex;
       align-items: center;
       gap: 8px;

@@ -27,6 +27,18 @@ import {
 import { difference, orderNested } from "./compare";
 import { hassChanged } from "./hass";
 import {
+  DEFAULT_SORT,
+  loadSort,
+  makeComparator,
+  naturalDirection,
+  resolveSort,
+  saveSort,
+  storageKey,
+  validateSortConfig,
+  type SortDirection,
+  type SortSpec,
+} from "./sort";
+import {
   errorCode,
   errorText,
   fetchCompare,
@@ -54,6 +66,10 @@ export interface CardConfig {
   grouping?: GroupingChoice;
   /** Show the "by period" table expanded (default false). */
   show_breakdown?: boolean;
+  /** Default sort of the device table: `name`, `total`, `avg_price` or a zone key (default `total`). */
+  sort?: string;
+  /** Default direction (default: the key's natural one, descending for money). */
+  sort_direction?: SortDirection;
 }
 
 /** While the period contains today, re-fetch this often (new hours get compiled). */
@@ -86,6 +102,7 @@ export class EnergyCostStatsCard extends LitElement {
     _customStart: { state: true },
     _customEnd: { state: true },
     _breakdownEntity: { state: true },
+    _sortChoice: { state: true },
   };
 
   hass?: HassLike;
@@ -105,6 +122,11 @@ export class EnergyCostStatsCard extends LitElement {
   private _customStart = "";
   private _customEnd = "";
   private _breakdownEntity = "";
+  /** The user's last header click (remembered in localStorage), else the YAML default. */
+  private _sortChoice?: SortSpec;
+  private _storageKey = "";
+  private _controlsObserver?: ResizeObserver;
+  private _observedControls?: Element;
   private _requestSeq = 0;
   private _compareSeq = 0;
   /** The integration's time zone, learned from the first report (kept on errors). */
@@ -133,8 +155,11 @@ export class EnergyCostStatsCard extends LitElement {
     ) {
       throw new Error("entities must be a list of entity ids");
     }
+    validateSortConfig(config.sort, config.sort_direction);
     const previous = this._config;
     this._config = config;
+    this._storageKey = storageKey(globalThis.location?.pathname ?? "", config);
+    this._sortChoice = loadSort(this._storageKey);
     this._groupingChoice = config.grouping ?? "auto";
     if (previous && this._period) {
       // Config edited in the dashboard editor: start over from the configured period.
@@ -178,6 +203,15 @@ export class EnergyCostStatsCard extends LitElement {
 
   override connectedCallback(): void {
     super.connectedCallback();
+    if (typeof ResizeObserver !== "undefined") {
+      this._controlsObserver = new ResizeObserver((entries) => {
+        const entry = entries[entries.length - 1];
+        if (!entry) return;
+        const height = entry.target.getBoundingClientRect().height;
+        this.style.setProperty("--energy-cost-stats-controls-height", `${Math.ceil(height)}px`);
+      });
+    }
+    this._observeControls();
     this._timer = setInterval(() => {
       // Keep refreshing while the period is still running, plus once after it ended
       // (its last hour is only compiled then).
@@ -191,6 +225,20 @@ export class EnergyCostStatsCard extends LitElement {
     super.disconnectedCallback();
     if (this._timer !== undefined) clearInterval(this._timer);
     this._timer = undefined;
+    this._controlsObserver?.disconnect();
+    this._controlsObserver = undefined;
+    this._observedControls = undefined;
+  }
+
+  /** Keeps `--energy-cost-stats-controls-height` in sync with the sticky controls bar. */
+  private _observeControls(): void {
+    const observer = this._controlsObserver;
+    if (!observer) return;
+    const controls = this.shadowRoot?.querySelector(".controls") ?? undefined;
+    if (controls === this._observedControls) return;
+    if (this._observedControls) observer.unobserve(this._observedControls);
+    this._observedControls = controls;
+    if (controls) observer.observe(controls);
   }
 
   protected override willUpdate(changed: PropertyValues): void {
@@ -202,6 +250,7 @@ export class EnergyCostStatsCard extends LitElement {
 
   protected override updated(changed: PropertyValues): void {
     super.updated(changed);
+    this._observeControls();
     if (!this.hass || !this._period) return;
     if (changed.has("_period") || (changed.has("hass") && changed.get("hass") === undefined)) {
       void this._load();
@@ -374,7 +423,7 @@ export class EnergyCostStatsCard extends LitElement {
                 : nothing}
             </div>`
           : nothing}
-        ${this._renderPicker(s)}
+        <div class="controls">${this._renderPicker(s)}</div>
         <div class="content">
           ${this._error
             ? html`<div class="error" role="alert">${this._error}</div>`
@@ -471,6 +520,32 @@ export class EnergyCostStatsCard extends LitElement {
     `;
   }
 
+  // ---- sorting ----------------------------------------------------------
+
+  /** The sort in effect for a report: click, else YAML, else total cost descending. */
+  private _activeSort(report: ReportDocument): SortSpec {
+    const config = this._config;
+    const configured: SortSpec | undefined = config?.sort
+      ? { sort: config.sort, direction: config.sort_direction ?? naturalDirection(config.sort) }
+      : config?.sort_direction
+        ? { sort: DEFAULT_SORT.sort, direction: config.sort_direction }
+        : undefined;
+    const spec = this._sortChoice ?? configured ?? DEFAULT_SORT;
+    return resolveSort(
+      spec,
+      report.zones.map((z) => z.key),
+    );
+  }
+
+  private _onSort(key: string): void {
+    if (!this._report) return;
+    const active = this._activeSort(this._report);
+    const direction =
+      active.sort === key ? (active.direction === "asc" ? "desc" : "asc") : naturalDirection(key);
+    this._sortChoice = { sort: key, direction };
+    saveSort(this._storageKey, this._sortChoice);
+  }
+
   private _renderReport(s: Strings, report: ReportDocument): TemplateResult {
     if (report.devices.length === 0) {
       return html`<div class="note">${s.t("no_devices")}</div>`;
@@ -487,7 +562,7 @@ export class EnergyCostStatsCard extends LitElement {
         : nothing}
       <div class="table-wrap">
         <table class="devices">
-          ${this._renderHead(s, report, s.t("device"), totals)}
+          ${this._renderHead(s, report, s.t("device"), totals, this._activeSort(report))}
           <tbody>
             ${this._deviceRows(report).map(({ row, depth }) => {
               const device = row.entity_id ? names.get(row.entity_id) : undefined;
@@ -523,9 +598,18 @@ export class EnergyCostStatsCard extends LitElement {
   /** Rows in display order: nested devices directly after their upstream. */
   private _deviceRows(report: ReportDocument): { row: Row; depth: number }[] {
     const byId = new Map(report.totals.rows.map((r) => [r.entity_id, r]));
+    const rows = new Map<string, Row>();
+    for (const row of report.totals.rows) if (row.entity_id) rows.set(row.entity_id, row);
+    const names = new Map(report.devices.map((d) => [d.entity_id, d.name]));
+    const compare = makeComparator(
+      this._activeSort(report),
+      rows,
+      names,
+      this._strings.locale,
+    );
     const out: { row: Row; depth: number }[] = [];
     const used = new Set<Row>();
-    for (const { entity_id, depth } of orderNested(report.devices)) {
+    for (const { entity_id, depth } of orderNested(report.devices, compare)) {
       const row = byId.get(entity_id);
       if (row && !used.has(row)) {
         used.add(row);
@@ -616,26 +700,74 @@ export class EnergyCostStatsCard extends LitElement {
     </section>`;
   }
 
+  /**
+   * Two head rows. With `sort` (the device table) every top-row header is a sort button;
+   * the second row (kWh / cost) never is.
+   */
   private _renderHead(
     s: Strings,
     report: ReportDocument,
     firstColumn: string,
     totals: Bucket,
+    sort?: SortSpec,
   ): TemplateResult {
     const currency = report.currency;
+    const header = (key: string, column: string, content: TemplateResult | string) => {
+      if (!sort) return content;
+      const active = sort.sort === key;
+      const next: SortDirection = active
+        ? sort.direction === "asc"
+          ? "desc"
+          : "asc"
+        : naturalDirection(key);
+      const title = s.t("sort.by", {
+        column,
+        direction: s.t(next === "asc" ? "sort.ascending" : "sort.descending"),
+      });
+      return html`<button
+        type="button"
+        class="sort"
+        data-sort=${key}
+        title=${title}
+        @click=${() => this._onSort(key)}
+      >
+        ${content}${active
+          ? html`<span class="sort-indicator" aria-hidden="true"
+              >${sort.direction === "asc" ? "▲" : "▼"}</span
+            >`
+          : nothing}
+      </button>`;
+    };
+    const ariaSort = (key: string) =>
+      sort && sort.sort === key
+        ? sort.direction === "asc"
+          ? "ascending"
+          : "descending"
+        : nothing;
     return html`
       <thead>
         <tr>
-          <th rowspan="2" class="name">${firstColumn}</th>
+          <th rowspan="2" class="name" aria-sort=${ariaSort("name")}>
+            ${header("name", firstColumn, firstColumn)}
+          </th>
           ${report.zones.map((zone, index) => {
             const price = totals.total.zones[index]?.price ?? null;
-            return html`<th colspan="2" class="zone group-start">
-              ${zone.name}${price !== null
-                ? html`<span class="price">${s.money(price, currency)}</span>`
-                : nothing}
+            return html`<th colspan="2" class="zone group-start" aria-sort=${ariaSort(zone.key)}>
+              ${header(
+                zone.key,
+                s.t("sort.cost_of", { zone: zone.name }),
+                html`${zone.name}${price !== null
+                  ? html`<span class="price">${s.money(price, currency)}</span>`
+                  : nothing}`,
+              )}
             </th>`;
           })}
-          <th colspan="3" class="zone sum group-start">${s.t("total")}</th>
+          <th colspan="2" class="zone sum group-start" aria-sort=${ariaSort("total")}>
+            ${header("total", s.t("sort.total_cost"), s.t("total"))}
+          </th>
+          <th rowspan="2" class="num avg group-start" aria-sort=${ariaSort("avg_price")}>
+            ${header("avg_price", s.t("avg_price"), s.t("avg_price"))}
+          </th>
         </tr>
         <tr>
           ${report.zones.map(
@@ -645,7 +777,6 @@ export class EnergyCostStatsCard extends LitElement {
           )}
           <th class="num group-start">${s.t("kwh")}</th>
           <th class="num">${s.t("cost")}</th>
-          <th class="num">${s.t("avg_price")}</th>
         </tr>
       </thead>
     `;
@@ -693,7 +824,7 @@ export class EnergyCostStatsCard extends LitElement {
         )}
         <td class="num strong group-start">${s.number(row.kwh, 2)}</td>
         <td class="num strong">${s.money(row.cost, currency)}</td>
-        <td class="num">${s.avgPrice(row.cost, row.kwh)}</td>
+        <td class="num group-start">${s.avgPrice(row.cost, row.kwh)}</td>
       </tr>
     `;
   }
@@ -799,6 +930,13 @@ export class EnergyCostStatsCard extends LitElement {
   static override styles = css`
     :host {
       display: block;
+      /* Where the controls stick: below Home Assistant's top bar (override per theme / kiosk). */
+      --ecs-sticky-top: var(
+        --energy-cost-stats-sticky-top,
+        calc(
+          var(--header-height, 56px) + var(--safe-area-inset-top, env(safe-area-inset-top, 0px))
+        )
+      );
     }
     ha-card {
       padding: 12px 16px 16px;
@@ -818,6 +956,15 @@ export class EnergyCostStatsCard extends LitElement {
     .loading {
       color: var(--secondary-text-color);
       font-size: 0.85rem;
+    }
+    .controls {
+      position: sticky;
+      top: var(--ecs-sticky-top);
+      /* Below Home Assistant's fixed header (z-index 4); above the table box. */
+      z-index: 3;
+      margin-inline: -16px;
+      padding-inline: 16px;
+      background: var(--ha-card-background, var(--card-background-color, white));
     }
     .picker,
     .custom,
@@ -891,7 +1038,10 @@ export class EnergyCostStatsCard extends LitElement {
       color: var(--warning-color, #ffa600);
     }
     .table-wrap {
-      overflow-x: auto;
+      /* Scrolls in both axes inside the card so the head rows can stick to its top. */
+      overflow: auto;
+      max-height: calc(100vh - var(--ecs-sticky-top) - var(--energy-cost-stats-controls-height, 0px) - 8px);
+      max-height: calc(100dvh - var(--ecs-sticky-top) - var(--energy-cost-stats-controls-height, 0px) - 8px);
       container-type: inline-size;
     }
     section.comparison {
@@ -920,10 +1070,45 @@ export class EnergyCostStatsCard extends LitElement {
       padding: 4px 6px;
       white-space: nowrap;
     }
+    thead {
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
     thead th {
       color: var(--secondary-text-color);
       font-weight: 500;
-      border-bottom: 1px solid var(--divider-color);
+      background: var(--ha-card-background, var(--card-background-color, white));
+      /* A shadow, not a border: borders of sticky cells scroll away in collapsed tables. */
+      box-shadow: inset 0 -1px 0 var(--divider-color);
+    }
+    thead tr:first-child th {
+      vertical-align: top;
+    }
+    button.sort {
+      display: block;
+      width: 100%;
+      padding: 0;
+      border-radius: 0;
+      color: inherit;
+      font-weight: inherit;
+      text-align: inherit;
+      white-space: inherit;
+    }
+    button.sort:hover:not([disabled]) {
+      background: none;
+      color: var(--primary-text-color);
+    }
+    button.sort:focus-visible {
+      outline: 2px solid var(--primary-color);
+      outline-offset: 2px;
+    }
+    .sort-indicator {
+      margin-inline-start: 4px;
+      font-size: 0.75em;
+    }
+    th.avg {
+      text-align: end;
     }
     th.zone {
       text-align: center;
@@ -943,6 +1128,13 @@ export class EnergyCostStatsCard extends LitElement {
       background: var(--card-background-color, var(--ha-card-background, white));
       /* A shadow, not a border: borders of a sticky cell scroll away in collapsed tables. */
       box-shadow: inset -1px 0 0 var(--divider-color);
+      z-index: 1;
+    }
+    thead th.name {
+      z-index: 3;
+      box-shadow:
+        inset -1px 0 0 var(--divider-color),
+        inset 0 -1px 0 var(--divider-color);
     }
     tbody th.name,
     tfoot th.name {
