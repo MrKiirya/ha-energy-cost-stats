@@ -5,6 +5,8 @@ import json
 import re
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CUSTOM_COMPONENTS_DIR = REPO_ROOT / "custom_components"
 INTEGRATION_DIR = CUSTOM_COMPONENTS_DIR / "energy_cost_stats"
@@ -96,3 +98,106 @@ def test_strings_match_en_translation():
     assert "title" not in en
     for value in _collect_values(strings):
         assert "[%key:" not in str(value)
+
+
+TRANSLATIONS_DIR = INTEGRATION_DIR / "translations"
+TRANSLATION_FILES = sorted(TRANSLATIONS_DIR.glob("*.json"))
+CYRILLIC = re.compile("[\u0400-\u04ff]")
+# English values that are only a brand name or a placeholder: nothing to translate.
+UNTRANSLATED_ALLOWLIST = {
+    "config.step.user.title",
+    "config_subentries.tariff.step.select_version.description",
+}
+
+
+def _load(path: Path) -> dict:
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _flatten(obj, prefix: str = "") -> dict[str, str]:
+    """Map dotted key paths to leaf values."""
+    flat: dict[str, str] = {}
+    for key, value in obj.items():
+        path = f"{prefix}.{key}" if prefix else key
+        if isinstance(value, dict):
+            flat.update(_flatten(value, path))
+        else:
+            flat[path] = value
+    return flat
+
+
+def _placeholders(text: str) -> set[str]:
+    return set(re.findall(r"\{([^{}]*)\}", text))
+
+
+@pytest.mark.unit
+def test_russian_translation_exists():
+    path = TRANSLATIONS_DIR / "ru.json"
+    assert path.is_file()
+    assert isinstance(_load(path), dict)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("path", TRANSLATION_FILES, ids=lambda p: p.stem)
+def test_translation_keys_match_strings(path):
+    strings = _flatten(_load(INTEGRATION_DIR / "strings.json"))
+    lang_data = _load(path)
+    assert "title" not in lang_data
+    lang = _flatten(lang_data)
+    missing = sorted(set(strings) - set(lang))
+    extra = sorted(set(lang) - set(strings))
+    assert not missing, f"missing keys: {missing}"
+    assert not extra, f"extra keys: {extra}"
+    assert all(isinstance(v, str) for v in lang.values())
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("path", TRANSLATION_FILES, ids=lambda p: p.stem)
+def test_translation_placeholders_match_strings(path):
+    strings = _flatten(_load(INTEGRATION_DIR / "strings.json"))
+    lang = _flatten(_load(path))
+    mismatched = {
+        key: (sorted(_placeholders(strings[key])), sorted(_placeholders(lang[key])))
+        for key in strings
+        if key in lang and _placeholders(lang[key]) != _placeholders(strings[key])
+    }
+    assert not mismatched, f"placeholder mismatch (expected, actual): {mismatched}"
+
+
+def _hassfest_problems(values: dict[str, str]) -> list[str]:
+    problems = []
+    for key, value in values.items():
+        if not isinstance(value, str) or not value:
+            problems.append(f"{key}: empty or not a string")
+            continue
+        if "[%key:" in value:
+            problems.append(f"{key}: key reference")
+        if re.search(r"<[a-zA-Z/][^>]*>", value):
+            problems.append(f"{key}: HTML")
+        if re.search(r"'\{", value):
+            problems.append(f"{key}: placeholder in single quotes")
+        if not all(name.isidentifier() for name in _placeholders(value)):
+            problems.append(f"{key}: placeholder name is not an identifier")
+        if value != value.strip():
+            problems.append(f"{key}: leading or trailing whitespace")
+    return problems
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "path", [INTEGRATION_DIR / "strings.json", *TRANSLATION_FILES], ids=lambda p: p.name
+)
+def test_translation_values_pass_hassfest_rules(path):
+    assert _hassfest_problems(_flatten(_load(path))) == []
+
+
+@pytest.mark.unit
+def test_russian_values_are_translated():
+    ru = _flatten(_load(TRANSLATIONS_DIR / "ru.json"))
+    assert ru
+    untranslated = sorted(
+        key
+        for key, value in ru.items()
+        if key not in UNTRANSLATED_ALLOWLIST and not CYRILLIC.search(value)
+    )
+    assert not untranslated, f"no Cyrillic text in: {untranslated}"
