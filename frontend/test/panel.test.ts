@@ -6,6 +6,7 @@ import type { HassLike } from "../src/report";
 import { compareDoc, report } from "./fixtures";
 
 type Msg = Record<string, unknown>;
+type CardConfigLike = { period_source?: string; collection_key?: string };
 
 function makeHass(language = "en"): HassLike & { calls: Msg[] } {
   const calls: Msg[] = [];
@@ -160,5 +161,76 @@ describe("sticky toolbar", () => {
     const css = EnergyCostStatsPanel.styles.toString();
     expect(css).toMatch(/\.toolbar\s*{[^}]*position: sticky/);
     expect(css).toMatch(/--energy-cost-stats-sticky-top:\s*var\(--header-height/);
+  });
+
+  describe("energy date picker", () => {
+    type Helpers = {
+      createCardElement: (config: Record<string, unknown>) => HTMLElement;
+    };
+    const win = window as unknown as {
+      loadCardHelpers?: () => Promise<Helpers>;
+    };
+
+    afterEach(() => {
+      delete win.loadCardHelpers;
+    });
+
+    it("creates HA's energy-date-selection card and makes the cost card follow it", async () => {
+      const created: Record<string, unknown>[] = [];
+      win.loadCardHelpers = () =>
+        Promise.resolve({
+          createCardElement: (config) => {
+            created.push(config);
+            return document.createElement("div");
+          },
+        });
+      const el = await mount();
+      expect(created).toHaveLength(1);
+      expect(created[0]!.type).toBe("energy-date-selection");
+      const key = created[0]!.collection_key as string;
+      expect(key.startsWith("energy_")).toBe(true);
+      const card = cardOf(el);
+      expect(card).not.toBeNull();
+      const config = (card as unknown as { _config: CardConfigLike })._config;
+      expect(config.period_source).toBe("energy");
+      expect(config.collection_key).toBe(key);
+      expect(el.shadowRoot!.querySelector(".picker")).not.toBeNull();
+    });
+
+    it("passes hass to the picker, also on later updates, and marks the panel", async () => {
+      const picker = document.createElement("div") as HTMLElement & { hass?: unknown };
+      win.loadCardHelpers = () => Promise.resolve({ createCardElement: () => picker });
+      const hass = makeHass();
+      const el = await mount({ hass });
+      expect(picker.hass).toBe(hass);
+      expect(el.hasAttribute("has-picker")).toBe(true);
+      const next = makeHass();
+      el.hass = next;
+      expect(picker.hass).toBe(next);
+    });
+
+    it("treats HA's error card as no picker", async () => {
+      win.loadCardHelpers = () =>
+        Promise.resolve({ createCardElement: () => document.createElement("hui-error-card") });
+      const el = await mount();
+      const config = (cardOf(el) as unknown as { _config: CardConfigLike })._config;
+      expect(config.period_source).toBeUndefined();
+      expect(el.hasAttribute("has-picker")).toBe(false);
+      expect(el.shadowRoot!.querySelector(".picker")).toBeNull();
+    });
+
+    it("falls back to the card's own picker without card helpers", async () => {
+      const el = await mount();
+      const config = (cardOf(el) as unknown as { _config: CardConfigLike })._config;
+      expect(config.period_source).toBeUndefined();
+      expect(el.shadowRoot!.querySelector(".picker")).toBeNull();
+    });
+
+    it("falls back when the helpers fail", async () => {
+      win.loadCardHelpers = () => Promise.reject(new Error("nope"));
+      const el = await mount();
+      const config = (cardOf(el) as unknown as { _config: CardConfigLike })._config;
+      expect(config.period_source).toBeUndefined();
+    });
   });
 });
