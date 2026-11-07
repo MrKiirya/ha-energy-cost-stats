@@ -11,7 +11,7 @@ import {
   type EnergyCollectionLike,
 } from "../src/energy-period";
 import type { HassLike } from "../src/report";
-import { report } from "./fixtures";
+import { compareDoc, report } from "./fixtures";
 
 type Msg = Record<string, unknown>;
 
@@ -132,7 +132,9 @@ describe("card following the energy date picker", () => {
       config: { time_zone: "Europe/Moscow", currency: "RUB" },
       callWS: <T>(msg: Msg) => {
         calls.push(msg);
-        return Promise.resolve(report()) as Promise<T>;
+        return Promise.resolve(
+          msg.type === "energy_cost_stats/compare" ? compareDoc() : report(),
+        ) as Promise<T>;
       },
     };
   }
@@ -185,6 +187,20 @@ describe("card following the energy date picker", () => {
     });
   });
 
+  it("requests the comparison for the picker's period too", async () => {
+    const hass = makeHass({ "_energy_cost-card": collection });
+    const card = await mount({ period_source: "energy" }, hass);
+    const compares = hass.calls.filter((c) => c.type === "energy_cost_stats/compare");
+    expect(compares[compares.length - 1]).toMatchObject({
+      start: "2026-10-01",
+      end: "2026-11-01",
+    });
+    collection.setPeriod(msk("2026-11-02"), msk("2026-11-08", true));
+    await settle(card);
+    const later = hass.calls.filter((c) => c.type === "energy_cost_stats/compare");
+    expect(later[later.length - 1]).toMatchObject({ start: "2026-11-02" });
+  });
+
   it("uses a configured collection_key", async () => {
     const hass = makeHass({ _energy_mine: collection });
     const card = await mount({ period_source: "energy", collection_key: "energy_mine" }, hass);
@@ -218,6 +234,22 @@ describe("card following the energy date picker", () => {
     await settle(card);
     expect(card.followsEnergyPicker).toBe(true);
     expect(hass.calls[hass.calls.length - 1]).toMatchObject({ start: "2026-10-01" });
+  });
+
+  it("keeps the hass gate while no collection exists, and attaches one that appears", async () => {
+    const connection: Record<string, unknown> = {};
+    const hass = makeHass(connection);
+    const card = await mount({ period_source: "energy" }, hass);
+    const render = vi.spyOn(card as unknown as { render: () => unknown }, "render");
+    card.hass = { ...hass }; // an entity-state-only update
+    await settle(card);
+    expect(render).not.toHaveBeenCalled();
+    expect(card.followsEnergyPicker).toBe(false);
+
+    connection["_energy_cost-card"] = collection;
+    card.hass = { ...hass };
+    await settle(card);
+    expect(card.followsEnergyPicker).toBe(true);
   });
 
   it("unsubscribes when removed", async () => {
